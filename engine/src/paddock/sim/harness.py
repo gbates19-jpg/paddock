@@ -152,5 +152,41 @@ def run_simulation(
         bus.publish(WorkerHeartbeat(name="executor", state=WorkerState.IDLE, last_latency_ms=None))
         bus.publish(WorkerHeartbeat(name="pnl", state=WorkerState.IDLE, last_latency_ms=None))
 
+    _record_final_orders(framework, run_id, data_dir)
+
     logger.info("Simulation run %s complete over %d market file(s)", run_id, len(market_files))
     return run_id
+
+
+def _record_final_orders(framework: FlumineSimulation, run_id: str, data_dir: Path) -> None:
+    """Reads every order's FINAL state directly from framework.markets[*]
+    .blotter, on the main thread, after framework.run() has already
+    returned — the same pattern flumine's own examples/simulate.py uses.
+
+    This is deliberately NOT done via PaddockLoggingControl: confirmed
+    against flumine 3.2.0 source that log_control(OrderEvent(order)) fires
+    exactly once per order, at successful placement, never again on
+    cancel or match — so whether that single background-thread-processed
+    snapshot catches an order's final status is a genuine race against the
+    main thread's ongoing simulation. Reading the blotter here instead,
+    after the simulation has fully finished, has no such race — every
+    order object's state is final and nothing else is mutating it.
+    See paddock.sim.logging_control's module docstring for the full story.
+    """
+    with store.connect(data_dir) as con:
+        for market in framework.markets:
+            for order in market.blotter:
+                side = "back" if order.side == "BACK" else "lay"
+                store.record_order(
+                    con,
+                    run_id,
+                    order.id,
+                    order.market_id,
+                    order.selection_id,
+                    side,
+                    order.order_type.price,
+                    order.order_type.size,
+                    order.size_matched or 0.0,
+                    order.status.value if order.status else "unknown",
+                    order.profit,
+                )

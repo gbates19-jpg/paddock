@@ -115,16 +115,52 @@ logged as a loud warning (you're leaving a real backtest on the table).
   not rest and hope. Fixed: the closer now places an aggressive LAY at
   the current best `available_to_lay` (the opposing side's touch price —
   the price genuinely on offer right now), sized to the open position; if
-  unmatched after one tick, cancel and re-place one tick worse, up to
-  `slippage_ticks` (config, default 3) times, then give up and publish
-  `position.unhedged` + log ERROR rather than silently accept a naked
-  loss. **Re-validated after the fix**: ladder and ltp_cross now agree
-  exactly on this sample (both +0.04) — the closer matched on its first
-  liquidity-taking attempt in every case this time, so there was no
-  slippage cost to observe on this particular sample, just the bug
-  fixed. A sample where the closer has to walk ticks would show a real,
-  smaller residual gap (spread cost) instead of a naked position — that's
-  the expected remaining difference between the two models going forward.
+  unmatched, cancel and re-place one tick worse, up to `slippage_ticks`
+  (config, default 3) times, then give up and publish `position.unhedged`
+  + log ERROR rather than silently accept a naked loss. **Re-validated
+  after the fix**: ladder and ltp_cross now agree exactly on this sample
+  (both +0.04) — the closer matched on its first liquidity-taking attempt
+  in every case this time, so there was no slippage cost to observe on
+  this particular sample, just the bug fixed. A sample where the closer
+  has to walk ticks would show a real, smaller residual gap (spread cost)
+  instead of a naked position — that's the expected remaining difference
+  between the two models going forward.
+
+  Second correction on the closer itself: the first fix re-checked "has it
+  matched yet" by comparing tick count (`market_book.publish_time_epoch ==
+  <the epoch it was placed at>`), and (wrongly) added a `time.sleep()`
+  hoping to give a pending order package time to resolve inside the same
+  callback that placed it. Neither makes sense given how flumine's
+  simulation actually works: place/cancel execute synchronously in the
+  callback, but simulated matching only happens later, inside
+  `SimulatedMiddleware`, on a subsequent tick, and only once market time
+  has advanced `config.place_latency` (120ms) past placement — nothing can
+  settle inside the same callback that placed the order, so blocking with
+  `time.sleep()` there is a no-op by construction. Fixed: the closer is
+  now a proper state machine re-checked on later `process_market_book`
+  calls, gated on elapsed **market time** since placement (not tick
+  count) — correct regardless of tick density (Pro's ~50ms ticks need ~3
+  before the gate opens; Advanced's ~1s ticks clear it on the very next
+  one).
+
+  Separately, an unrelated but real bug surfaced while chasing an
+  intermittent (~10-15%) test failure during this work: flumine's
+  `log_control(OrderEvent(order))` — the hook `PaddockLoggingControl` used
+  to persist each order's final state to `runs.db` — fires **exactly
+  once** per order, at successful placement, never again on cancel or
+  match (confirmed against `execution/baseexecution.py` and
+  `execution/simulatedexecution.py`). Since `order` is a mutable
+  reference, whichever moment the logging control's background thread
+  happened to process that one queued event determined what status it
+  saw — a genuine scheduling race against the main thread's ongoing
+  simulation, unrelated to the closer's own matching logic. Fixed by no
+  longer trying to persist orders from that single racy snapshot at all:
+  `paddock.sim.harness.run_simulation` now reads every order's final state
+  directly from `framework.markets[*].blotter` on the main thread, after
+  `framework.run()` has fully returned (the same pattern flumine's own
+  `examples/simulate.py` uses) — no thread, no race. Confirmed: 0/40
+  failures on repeated fresh-process runs after the fix (was reproducing
+  on roughly 1 in 8).
 
 ## Sim (step 2-3)
 
@@ -147,8 +183,10 @@ entry has actually matched something. At 30s before off: cancel any
 unmatched entry remainder; if entry matched but exit doesn't fully cover
 it, cancel exit's remainder and start the CLOSER retry loop for the
 shortfall — an aggressive LAY at the current best `available_to_lay`
-(taking liquidity, not resting), walking one tick worse per unmatched
-tick up to `slippage_ticks` (default 3) attempts, then giving up with
+(taking liquidity, not resting), re-checked once market time has advanced
+`config.place_latency` past placement (not tick count — see Fill models
+above), cancelling and walking one price-tick worse per unmatched attempt
+up to `slippage_ticks` (default 3), then giving up with
 `position.unhedged` + an ERROR log. Guarantees zero net position by
 market close in every scenario the retry loop actually resolves — proven
 against synthetic market data with exact ltp control

@@ -49,6 +49,20 @@ position if the lay never matched):
      tests/test_baseline_ladder_flat_invariant.py for the same check
      against the real Aug 2015 Pro fixture.
 
+Closer timing is a state machine, not a sleep: place/cancel execute
+synchronously inside the process_market_book callback that calls them, but
+simulated MATCHING only happens later, inside SimulatedMiddleware, on a
+later tick — and only once market-time has advanced at least
+config.place_latency (120ms) past the order's placement. Nothing can
+settle inside the same callback that placed the order, so blocking with
+time.sleep() there is a no-op by construction (tried it, confirmed it does
+nothing useful, removed it). The correct design re-checks each closer
+attempt on a LATER call to process_market_book, gated on market time
+(market_book.publish_time_epoch), not tick count — Pro data ticks every
+~50ms so the first re-check lands ~3 ticks after placement; Advanced data
+ticks roughly every second so it's the very next tick either way. See
+_progress_closer.
+
 Fill-model-agnostic, and the "best available" assumption under ltp_cross:
 _best_back_price / _best_lay_price read runner.ex.available_to_back/lay
 (fill_model=ladder / Advanced+Pro data) and fall back to
@@ -69,6 +83,7 @@ import logging
 from collections import OrderedDict
 from dataclasses import dataclass, field
 
+from flumine import config as flumine_config
 from flumine.order.order import OrderStatus
 from flumine.order.ordertype import LimitOrder
 from flumine.order.trade import Trade
@@ -83,6 +98,11 @@ logger = logging.getLogger(__name__)
 
 MIN_CLOSER_SIZE = 0.01  # below this, floating point noise, not a real shortfall
 
+# Mirrors flumine's own config.place_latency (0.12s) — a closer attempt
+# can't possibly have matched before this much MARKET time has passed
+# since it was placed, so there's no point re-checking any sooner.
+PLACE_LATENCY_MS = flumine_config.place_latency * 1000
+
 
 @dataclass
 class _MarketState:
@@ -92,7 +112,7 @@ class _MarketState:
     at_off_handled: bool = False
     closer_target: float = 0.0
     closer_orders: list = field(default_factory=list)
-    closer_placed_at_epoch: int | None = None
+    closer_placed_epoch: int | None = None
     unhedged: bool = False
 
 
@@ -324,7 +344,7 @@ class BaselineFavouriteScalp(BaseStrategy):
             return  # rejected — _progress_closer will try again next tick
 
         state.closer_orders.append(order)
-        state.closer_placed_at_epoch = market_book.publish_time_epoch
+        state.closer_placed_epoch = market_book.publish_time_epoch
 
         self.bus.publish(
             StrategySignal(
@@ -352,10 +372,16 @@ class BaselineFavouriteScalp(BaseStrategy):
         if current.status != OrderStatus.EXECUTABLE:
             return  # already resolved (matched or cancelled) — handled elsewhere
 
-        if market_book.publish_time_epoch == state.closer_placed_at_epoch:
-            return  # give this attempt at least one tick to match
+        # Time-based, not tick-count-based: simulated matching can't
+        # possibly have happened before market-time has advanced
+        # PLACE_LATENCY_MS past placement (flumine's own simulated
+        # latency floor), regardless of how many ticks that takes — ~3
+        # ticks on ~50ms Pro data, the very next tick on ~1s Advanced data.
+        ready_at = state.closer_placed_epoch + PLACE_LATENCY_MS
+        if market_book.publish_time_epoch < ready_at:
+            return  # not enough market time has passed to re-check yet
 
-        # one full tick has passed and it's still unmatched (or only
+        # enough time has passed and it's still unmatched (or only
         # partially) — recompute remaining first, a fill can land in the
         # same instant as the tick that triggers this check
         remaining = round(state.closer_target - self._closer_matched(state), 2)

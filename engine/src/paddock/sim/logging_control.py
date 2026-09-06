@@ -1,15 +1,32 @@
 """Bridges flumine's order/market lifecycle onto the paddock bus + runs.db.
 
 Hooks confirmed against flumine 3.2.0 source:
-- _process_order: fired on every Order update. flumine's OrderStatus enum has
-  no distinct CANCELLED/LAPSED terminal states (order/order.py) — a
-  cancellation and a lapse both just increase size_cancelled/size_lapsed
-  while status moves toward EXECUTION_COMPLETE. So lifecycle is derived by
-  diffing size_matched/size_cancelled/size_lapsed against the last seen
-  values per order id, not by reading .status directly.
+- _process_order: NOT fired on every order update — a real, load-bearing
+  gap found chasing an intermittent (~10-15%) test failure. Confirmed
+  against execution/baseexecution.py and execution/simulatedexecution.py:
+  log_control(OrderEvent(order)) is called EXACTLY ONCE per order's
+  lifetime, at successful placement — never on cancel, never on simulated
+  match (SimulatedMiddleware calls order.simulated(...) directly, no
+  log_control involved). Since `order` is a mutable object reference, not
+  a snapshot, whichever moment the LoggingControl's background thread
+  happens to dequeue and process that one event determines what status it
+  sees — a genuine GIL-scheduling race against the main thread's ongoing
+  simulation. This means _process_order's bus events (order.placed/
+  matched/cancelled/lapsed) are a **best-effort single snapshot** for
+  simulated backtests, not a reliable lifecycle feed — good enough for
+  live UI colour, but NOT something to persist to runs.db from here.
+  paddock.sim.harness.run_simulation instead records every order's FINAL
+  state directly from framework.markets[*].blotter on the main thread
+  after framework.run() returns (the same pattern flumine's own
+  examples/simulate.py uses) — no threading involved, no race possible.
 - _process_cleared_markets: fired once per client per market close in
   simulation (baseflumine._process_close_market loops `for client in
-  self.clients`). event.event.orders[i].commission is flumine's own
+  self.clients`). Safe from the same race: event.event.orders[i] is a
+  ClearedOrder resource built from plain dict values (market.cleared()'s
+  return dict) at the moment the event is constructed, not a reference to
+  a mutating object — its .profit/.commission/.bet_count are fixed by the
+  time it's enqueued, regardless of when the background thread processes
+  it. event.event.orders[i].commission is flumine's own
   max(profit * client.commission_base, 0) — see paddock.sim.commission for
   why we recompute it independently from the same commission_rate rather
   than trusting flumine's number outright (drift-detection, not distrust).
@@ -22,7 +39,6 @@ import sqlite3
 from pathlib import Path
 
 from flumine.controls.loggingcontrols import LoggingControl
-from flumine.order.order import OrderStatus
 
 from paddock.bus.bus import EventBus
 from paddock.bus.events import MarketClose, MarketOpen, OrderEvent, OrderSide, PnlUpdate, Runner
@@ -30,10 +46,6 @@ from paddock.sim import store
 from paddock.sim.commission import compute_commission
 
 logger = logging.getLogger(__name__)
-
-# VIOLATION deliberately excluded — a rejected order never reaches
-# _process_order at all (see its docstring), so it can never land here.
-COMPLETE_STATUS = {OrderStatus.EXECUTION_COMPLETE, OrderStatus.EXPIRED}
 
 
 class _OrderProgress:
@@ -118,23 +130,6 @@ class PaddockLoggingControl(LoggingControl):
             self._publish_order_event("order.lapsed", order, side, price, size, matched)
 
         progress.matched, progress.cancelled, progress.lapsed = matched, cancelled, lapsed
-
-        if order.status in COMPLETE_STATUS:
-            con = self._get_con()
-            store.record_order(
-                con,
-                self.run_id,
-                order.id,
-                order.market_id,
-                order.selection_id,
-                side.value,
-                price,
-                size,
-                matched,
-                order.status.value,
-                order.profit,
-            )
-            con.commit()
 
     def _publish_order_event(self, event_type: str, order, side, price, size, matched) -> None:
         self.bus.publish(
