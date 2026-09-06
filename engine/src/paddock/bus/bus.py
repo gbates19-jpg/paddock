@@ -3,6 +3,22 @@
 Single process, single asyncio loop (per Phase 0 stack decision — no Redis).
 The bus also keeps a rolling snapshot of "current state" so a websocket
 client that connects mid-run can be caught up without replaying history.
+
+Thread-safety: `publish()` is called from more than one thread once a sim
+run is driven from a background thread (paddock.api.main's POST
+/sim/start) — both the thread running `FlumineSimulation.run()` itself
+(paddock.sim.harness) and flumine's own internal LoggingControl thread
+(paddock.sim.logging_control) call it, neither of which is the asyncio
+loop's thread. `asyncio.Queue.put_nowait` is documented as NOT
+thread-safe — calling it off-loop can silently corrupt the queue's
+internal waiter bookkeeping rather than raising, which would look like
+"the UI randomly misses fills" under load, not a crash. `bind_loop()`
+records the loop that owns this bus's subscriber queues; once bound,
+every `publish()` — regardless of which thread calls it — is marshalled
+onto that loop via `call_soon_threadsafe` before touching any queue.
+Before `bind_loop()` is called (plain CLI usage, no API/websocket layer
+involved at all) `publish()` runs synchronously in the calling thread, so
+`paddock sim run` on its own pays no extra cost and needs no running loop.
 """
 from __future__ import annotations
 
@@ -36,8 +52,25 @@ class EventBus:
         self._runner_prices: dict[tuple[str, int], RunnerPrice] = {}
         self._pnl: PnlUpdate | None = None
         self._run_config: RunConfig | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def bind_loop(self, loop: asyncio.AbstractEventLoop | None) -> None:
+        """Called once from paddock.api.main's lifespan, with the loop
+        FastAPI/uvicorn is actually running on. Until this is called,
+        publish() assumes there's no loop to protect (plain CLI usage)."""
+        self._loop = loop
 
     def publish(self, event: BaseEvent) -> None:
+        # call_soon_threadsafe is safe to use even when we happen to already
+        # be on the loop's own thread (it's just a slower call_soon in that
+        # case) — so we don't need to detect which thread we're on, only
+        # whether a loop has been bound at all.
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._publish_now, event)
+        else:
+            self._publish_now(event)
+
+    def _publish_now(self, event: BaseEvent) -> None:
         self._history.append(event)
         self._update_snapshot(event)
         dead = []

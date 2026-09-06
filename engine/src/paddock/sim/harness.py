@@ -60,7 +60,7 @@ def discover_market_files(data_path: Path) -> list[Path]:
     return sorted(p for p in data_path.rglob("*") if p.is_file() and _looks_like_market_file(p))
 
 
-def _validate_fill_model(
+def validate_fill_model(
     fill_model: str, market_files: list[Path], data_dir: Path | None
 ) -> None:
     """ladder needs ex/trd data — REFUSE (raise) if any file lacks it.
@@ -113,7 +113,7 @@ def run_simulation(
         raise FileNotFoundError("No market files provided to run_simulation")
 
     data_dir = Path(data_dir)
-    _validate_fill_model(fill_model, market_files, data_dir)
+    validate_fill_model(fill_model, market_files, data_dir)
 
     run_id = run_id or uuid4().hex
     strategy_kwargs = dict(strategy_kwargs or {})

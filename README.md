@@ -217,6 +217,79 @@ strategy should call through it rather than `market.place_order` directly.
 Results land in `<PADDOCK_DATA_DIR>/runs.db`, readable via the API's
 `/runs` endpoints.
 
+## Watching a real run live in the control room (step 6)
+
+The UI's `?demo=1` mode (see UI section above) replays a bundled,
+pre-recorded event stream with no engine involved at all — useful for
+checking the control room renders, but it's not a real race. To actually
+watch a `paddock sim run` live, start the engine's API (`uv run paddock
+api`) and drive it from `POST /sim/start` instead of the CLI — the CLI's
+`paddock sim run` runs in its own separate process with its own separate
+in-process event bus, so a websocket client connected to `paddock api`
+would never see any of its events.
+
+```
+curl -X POST http://localhost:8000/sim/start \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "strategy": "baseline",
+    "data_path": "pro/2015",
+    "speed": 5000,
+    "fill_model": "ladder"
+  }'
+```
+
+Mirrors `paddock sim run`'s options (`strategy`/`data_path`/`speed`/
+`fill_model`, same defaults: `speed=20`, `fill_model` from
+`config/engine.yaml` if omitted). `data_path` resolves the same way
+either way: an absolute path is used as-is, otherwise it's relative to
+`PADDOCK_DATA_DIR` (not the process's cwd, unlike the CLI's `--data`) —
+`"pro/2015"` above means `<PADDOCK_DATA_DIR>/pro/2015`. Returns
+immediately with `{"run_id", "market_count", "fill_model"}` (`202
+Accepted`) — it does not wait for the replay to finish. Rejects with a
+clear `400` if the strategy name is unknown, the data path resolves to no
+market files, or `fill_model=ladder` is requested against Basic Plan data
+— all checked before the background thread starts, not discovered inside
+it. Rejects with `409` if a run is already in progress in this process
+(only one at a time); there's no `POST /sim/stop` — see the "why not"
+in `paddock.api.main`'s module docstring, it's a deliberate omission, not
+a forgotten endpoint.
+
+**Pick `speed` for the data you're actually replaying, not a fixed
+number**: the Aug 2015 Pro-tier files (`data/pro/2015`) each carry the
+*full* pre-off history — often a day or more of mostly-quiet market
+before the race — so `speed=20` (a fine default for shorter/thinner
+data) can sit silent for minutes at the start of every market. Confirmed
+manually against 2 real Aug 2015 Pro files: at `speed=20` we saw zero
+events for the first several minutes; at `speed=5000` (the same figure
+already validated for Pro data in the Data section above) the same run
+produced continuous `runner.price` ticks within seconds and reached a
+real `market.close` + `pnl.update` inside 30 seconds. Once a run is going,
+the Book HUD's speed slider (`POST /sim/speed`) adjusts it live — no
+restart needed — so starting fast and dialling down once you're watching
+a specific race works better than guessing a single "watchable" number
+upfront.
+
+Once started, open the UI **without** `?demo=1`
+(`npm run dev`, then just the base URL) and it connects to the engine's
+`/events` websocket for real — a client that connects mid-run gets the
+bus's current snapshot first (workers, open markets, last runner prices,
+last P&L, and the active `run.config` — the mode badge and speed control
+read this, not just live events) and then every event from that point on,
+same as a client that was already connected when the run started.
+
+This is exactly the flow for watching from a phone over Tailscale: start
+the engine on this machine, `curl POST /sim/start` (from this machine, or
+from the phone itself — the API has no auth in Phase 0, don't expose it
+beyond the tailnet), then open the UI at
+`http://mac-mini-slave.tail94ff73.ts.net:5173/` per the Docker section's
+Tailscale instructions below — the same `ui/.env` (`VITE_API_WS_URL`) and
+`engine/.env` (`PADDOCK_API_CORS_ORIGIN`) gotchas documented there apply
+here unchanged: both need to point at the Tailscale hostname, not
+`localhost`, or the phone gets a blank control room (websocket) or
+CORS-rejected speed-slider calls (REST), not an error message telling you
+why.
+
 ## Docker (step 5)
 
 **UNTESTED** — this Mac doesn't have Docker installed, so `docker-compose.yml`
