@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { runnerKey, useEventStore } from "../store/eventStore";
 import type { OrderEvent, PriceLevel } from "../lib/events";
-import { ticksBetween } from "../lib/ticks";
+import { ticksBetween, tickDown, tickUp } from "../lib/ticks";
 import { colors, colorsCss, fonts } from "../theme";
 
 const DEPTH_ROWS = 3;
@@ -244,12 +244,16 @@ export function LadderScene() {
               const bestBack = observedBack[0]?.price;
               const bestLay = observedLay[0]?.price;
 
-              // fill the gap between best-lay and best-back (and a little
-              // beyond) with real ladder ticks, not just the sparse levels
-              // the feed happened to report — this is what makes it read
-              // as a ladder instead of a couple of floating bars.
-              const hi = Math.max(bestLay ?? 0, bestBack ?? 0, ...orders.map((o) => o.price));
-              const lo = Math.min(bestLay ?? hi, bestBack ?? hi, ...orders.map((o) => o.price));
+              // Fill the gap between best-lay and best-back, AND a few
+              // ticks beyond each touch price, with real ladder ticks —
+              // not just the sparse levels the feed happened to report.
+              // A tight one-tick spread (common near the top of the book)
+              // would otherwise render as just two floating bars; real
+              // ladders always show empty rows beyond the touch too.
+              const rawHi = Math.max(bestLay ?? 0, bestBack ?? 0, ...orders.map((o) => o.price));
+              const rawLo = Math.min(bestLay ?? rawHi, bestBack ?? rawHi, ...orders.map((o) => o.price));
+              const hi = rawHi > 0 ? tickUp(tickUp(rawHi)) : 0;
+              const lo = rawHi > 0 ? tickDown(tickDown(rawLo)) : 0;
               const tickRows = hi > 0 ? ticksBetween(lo, hi, LADDER_WINDOW) : [];
 
               const prices = new Set<number>(tickRows);

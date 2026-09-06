@@ -79,6 +79,29 @@ export function FloorScene() {
       fontFamily: fonts.mono,
       fontSize: 12,
     });
+    const layoutNameNarrow = new TextStyle({
+      fill: colors.textDim,
+      fontFamily: fonts.mono,
+      fontSize: 9,
+    });
+
+    const SHORT_LABELS: Record<string, string> = {
+      stream: "stream",
+      executor: "exec",
+      pnl: "pnl",
+      keep_alive: "alive",
+      data_loader: "loader",
+    };
+
+    // Full worker names ("strategy:BaselineFavouriteScalp") are wider
+    // than the gap between nodes on a phone-width screen and overlap
+    // their neighbours — abbreviate below NARROW_PX rather than shrinking
+    // text to the point of being unreadable.
+    const NARROW_PX = 640;
+    function shortLabel(name: string): string {
+      if (name.startsWith("strategy:")) return "strat";
+      return SHORT_LABELS[name] ?? name.slice(0, 6);
+    }
 
     function drawGrid() {
       const w = app.screen.width || 800;
@@ -163,20 +186,30 @@ export function FloorScene() {
       drawGrid();
       app.renderer.on("resize", drawGrid);
 
-      for (const name of MAIN_ROW) ensureNode(name);
+      // "strategy" is a slot in MAIN_ROW for layout purposes only — the
+      // real node is whatever concrete "strategy:<Name>" worker heartbeat
+      // shows up (see flowSlot/resolveNodeName below); creating a literal
+      // "strategy" node here too would draw two overlapping labels in the
+      // same spot the moment a real strategy heartbeat arrives.
+      for (const name of MAIN_ROW) if (name !== "strategy") ensureNode(name);
       for (const name of SATELLITES) ensureNode(name);
 
       app.ticker.add(() => {
         const state = useEventStore.getState();
-        const names = Array.from(new Set([...MAIN_ROW, ...SATELLITES, ...Object.keys(state.workers)]));
+        const names = Array.from(
+          new Set([...MAIN_ROW.filter((n) => n !== "strategy"), ...SATELLITES, ...Object.keys(state.workers)])
+        );
 
+        const narrow = (app.screen.width || 800) < NARROW_PX;
         for (const name of names) {
           const node = ensureNode(name);
           const pos = nodePosition(name, names);
           node.container.x = pos.x;
           node.container.y = pos.y;
+          node.label.style = narrow ? layoutNameNarrow : layoutName;
+          node.label.text = narrow ? shortLabel(name) : name;
 
-          const hb = state.workers[name] ?? state.workers[name.replace(/^strategy$/, "")];
+          const hb = state.workers[name];
           const workerState = hb?.state ?? "idle";
           if (workerState === "busy" && !reduceMotion) node.spin += 0.08;
           if (workerState === "error" && node.lastState !== "error") node.shakeUntil = performance.now() + 400;

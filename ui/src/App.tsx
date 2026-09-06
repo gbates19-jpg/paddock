@@ -1,12 +1,14 @@
 import { AnimatePresence, motion } from "framer-motion";
 import type { CSSProperties } from "react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { startConnection } from "./lib/connection";
+import { BookScene } from "./scenes/BookScene";
 import { FloorScene } from "./scenes/FloorScene";
 import { LadderScene } from "./scenes/LadderScene";
 import { PaddockScene } from "./scenes/PaddockScene";
 import type { Scene } from "./store/eventStore";
 import { useEventStore } from "./store/eventStore";
+import { colors, colorsCss, fonts } from "./theme";
 
 const STATUS_LABEL: Record<string, string> = {
   connecting: "CONNECTING",
@@ -16,10 +18,10 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 const STATUS_COLOR: Record<string, string> = {
-  connecting: "#ffb84f",
-  connected: "#35e07a",
-  disconnected: "#ff4d6d",
-  demo: "#4fd1ff",
+  connecting: colorsCss.signal,
+  connected: colorsCss.pnlPos,
+  disconnected: colorsCss.rejected,
+  demo: colorsCss.price,
 };
 
 const SCENE_LABEL: Record<Scene, string> = {
@@ -42,14 +44,24 @@ const SCENE_LABEL: Record<Scene, string> = {
 const badgeStyle: CSSProperties = {
   padding: "6px 12px",
   borderRadius: 999,
-  background: "rgba(20, 26, 41, 0.72)",
-  border: "1px solid rgba(255,255,255,0.08)",
+  background: colors.panel,
+  border: `1px solid ${colors.panelBorder}`,
   backdropFilter: "blur(8px)",
   fontSize: 12,
   letterSpacing: "0.08em",
-  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+  fontFamily: fonts.mono,
   whiteSpace: "nowrap",
 };
+
+function useIsNarrow(): boolean {
+  const [narrow, setNarrow] = useState(() => window.innerWidth < 640);
+  useEffect(() => {
+    const onResize = () => setNarrow(window.innerWidth < 640);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  return narrow;
+}
 
 function ConnectionBadge() {
   const connection = useEventStore((s) => s.connection);
@@ -90,7 +102,7 @@ function ModeBadge() {
       }
       style={{
         ...badgeStyle,
-        color: isOptimistic ? "#ffb84f" : "#7c8496",
+        color: isOptimistic ? colorsCss.optimistic : colors.textDim,
       }}
     >
       {label}
@@ -98,7 +110,7 @@ function ModeBadge() {
   );
 }
 
-function SceneTabs() {
+function SceneTabs({ narrow }: { narrow: boolean }) {
   const scene = useEventStore((s) => s.scene);
   const setScene = useEventStore((s) => s.setScene);
   const scenes: Scene[] = ["floor", "paddock", "ladder"];
@@ -108,8 +120,8 @@ function SceneTabs() {
       style={{
         display: "flex",
         gap: 4,
-        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-        fontSize: 12,
+        fontFamily: fonts.mono,
+        fontSize: narrow ? 11 : 12,
         letterSpacing: "0.06em",
       }}
     >
@@ -119,21 +131,21 @@ function SceneTabs() {
           onClick={() => setScene(s)}
           style={{
             background: s === scene ? "rgba(79, 209, 255, 0.15)" : "transparent",
-            border: `1px solid ${s === scene ? "#4fd1ff" : "rgba(255,255,255,0.1)"}`,
-            color: s === scene ? "#4fd1ff" : "#7c8496",
+            border: `1px solid ${s === scene ? colorsCss.price : "rgba(255,255,255,0.1)"}`,
+            color: s === scene ? colorsCss.price : colors.textDim,
             borderRadius: 6,
-            padding: "5px 10px",
+            padding: narrow ? "5px 7px" : "5px 10px",
             cursor: "pointer",
           }}
         >
-          {SCENE_LABEL[s]}
+          {narrow ? SCENE_LABEL[s].replace("THE ", "") : SCENE_LABEL[s]}
         </button>
       ))}
     </div>
   );
 }
 
-function Header() {
+function Header({ narrow }: { narrow: boolean }) {
   return (
     <div
       style={{
@@ -143,14 +155,14 @@ function Header() {
         display: "flex",
         justifyContent: "space-between",
         alignItems: "flex-start",
-        padding: 16,
+        padding: narrow ? 10 : 16,
         gap: 12,
       }}
     >
-      <SceneTabs />
+      <SceneTabs narrow={narrow} />
       <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
         <ConnectionBadge />
-        <ModeBadge />
+        {!narrow && <ModeBadge />}
       </div>
     </div>
   );
@@ -159,6 +171,7 @@ function Header() {
 export default function App() {
   useEffect(() => startConnection(), []);
   const scene = useEventStore((s) => s.scene);
+  const narrow = useIsNarrow();
 
   return (
     <div
@@ -167,15 +180,16 @@ export default function App() {
         height: "100vh",
         display: "flex",
         flexDirection: "column",
-        background: "#05070d",
+        background: colors.bgHex,
       }}
     >
-      <Header />
+      <Header narrow={narrow} />
       <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
         {scene === "floor" && <FloorScene />}
         {scene === "paddock" && <PaddockScene />}
         {scene === "ladder" && <LadderScene />}
       </div>
+      <BookScene />
     </div>
   );
 }

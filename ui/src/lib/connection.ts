@@ -4,6 +4,14 @@ import type { WireMessage } from "./events";
 
 const API_WS_URL = (import.meta.env.VITE_API_WS_URL as string | undefined) ?? "ws://localhost:8000/events";
 
+// Same host as the events websocket, minus the ws(s):// -> http(s):// and
+// /events -> path swap — used by the Book HUD's speed slider to reach
+// POST /sim/speed without a second env var to keep in sync.
+export function apiHttpUrl(path: string): string {
+  const base = API_WS_URL.replace(/^ws/, "http").replace(/\/events\/?$/, "");
+  return `${base}${path}`;
+}
+
 export function isDemoMode(): boolean {
   return new URLSearchParams(window.location.search).get("demo") === "1";
 }
