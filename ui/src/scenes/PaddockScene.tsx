@@ -5,7 +5,8 @@ import { runnerKey, useEventStore } from "../store/eventStore";
 import type { MarketOpen, RunnerPrice } from "../lib/events";
 import { colors, fonts } from "../theme";
 
-const TRACK_LEFT = 220;
+const TRACK_LEFT_DESKTOP = 220;
+const TRACK_LEFT_PHONE = 150; // phone: labels are the same width, so give the track what is left
 const TRACK_RIGHT_MARGIN = 40;
 const LANE_HEIGHT = 34;
 const CARD_TOP_PADDING = 56;
@@ -56,17 +57,36 @@ interface CardVisual {
   lanes: Map<number, LaneVisual>;
 }
 
-// A simple silhouette — body ellipse, neck/head wedge, two leg strokes —
-// good enough to read as "a horse" at lane-dot scale without pulling in
-// an SVG asset pipeline.
-function drawHorse(g: Graphics, color: number, facingRight: boolean) {
-  const dir = facingRight ? 1 : -1;
+// A racehorse in profile as ONE polygon (units ~ 1px at lane scale, drawn
+// facing +x): head/neck, back, hindquarters, tail, four legs in a mid-
+// gallop pose. Traced by hand so it reads as a horse at 30px, not as the
+// ellipse-with-a-wedge it replaced (which read as a beetle in the first
+// screenshots). A polygon also means one fill call per horse per frame.
+const HORSE_POLY: number[] = [
+  // head (nose top) -> ears -> neck top -> withers -> back -> croup -> tail
+  20, -6, 18, -9, 15, -10, 13, -13, 11, -10, 8, -9, 4, -8, 0, -8, -5, -8, -9, -8,
+  -13, -6, -16, -3, -19, -2,
+  // tail
+  -21, 1, -20, 5, -17, 3,
+  // hind leg (back), trailing
+  -15, 4, -17, 10, -14, 10, -12, 5,
+  // belly to front legs
+  -9, 5, -4, 6,
+  // front leg (back, extended forward)
+  2, 5, 5, 11, 8, 11, 5, 5,
+  // chest -> throat -> jaw -> nose bottom
+  9, 3, 12, 0, 15, -1, 18, -2, 21, -3,
+];
+
+function drawHorse(g: Graphics, color: number, facingRight: boolean, isFavourite: boolean) {
   g.clear();
-  g.ellipse(0, 0, 11, 6).fill({ color, alpha: 0.95 });
-  g.moveTo(dir * 8, -4).lineTo(dir * 15, -9).lineTo(dir * 11, -1).fill({ color, alpha: 0.95 });
-  g.moveTo(-dir * 6, 5).lineTo(-dir * 6, 11).stroke({ width: 2, color });
-  g.moveTo(dir * 4, 5).lineTo(dir * 4, 11).stroke({ width: 2, color });
-  g.circle(0, 0, 17).fill({ color, alpha: 0.14 });
+  const dir = facingRight ? 1 : -1;
+  const pts: number[] = [];
+  for (let i = 0; i < HORSE_POLY.length; i += 2) pts.push(HORSE_POLY[i] * dir, HORSE_POLY[i + 1]);
+  g.circle(0, 0, 18).fill({ color, alpha: isFavourite ? 0.22 : 0.12 });
+  g.poly(pts).fill({ color, alpha: 0.96 });
+  // eye
+  g.circle(dir * 14, -7, 1.1).fill({ color: colors.bg, alpha: 0.9 });
 }
 
 export function PaddockScene() {
@@ -142,7 +162,7 @@ export function PaddockScene() {
     }
 
     (async () => {
-      await app.init({ background: colors.bg, resizeTo: host, antialias: true });
+      await app.init({ backgroundAlpha: 0, resizeTo: host, antialias: true });
       if (destroyed) {
         app.destroy(true, { children: true });
         return;
@@ -162,6 +182,7 @@ export function PaddockScene() {
           return ta - tb;
         });
         const seen = new Set<string>();
+        const TRACK_LEFT = app.screen.width < 640 ? TRACK_LEFT_PHONE : TRACK_LEFT_DESKTOP;
         const trackWidth = Math.max(100, app.screen.width - TRACK_LEFT - TRACK_RIGHT_MARGIN);
 
         let cardY = 0;
@@ -228,12 +249,19 @@ export function PaddockScene() {
               lane.trail.circle(tx, 0, 4).fill({ color: lane.color, alpha });
             });
 
-            drawHorse(lane.horse, lane.color, true);
+            // Bob while moving: a horse that just changed price is galloping,
+            // one sitting on its price is standing. Motion amount = how far it
+            // moved in the last few frames, so a big price move gallops harder.
+            const recent = lane.trailHistory.length > 4 ? Math.abs(x - lane.trailHistory[lane.trailHistory.length - 5]) : 0;
+            const gallop = Math.min(1, recent / 12);
+            const bob = gallop > 0.02 ? Math.sin(performance.now() / 90) * 2.2 * gallop : 0;
+            drawHorse(lane.horse, lane.color, true, runner.selection_id === favouriteSelection && maxProb > 0);
             lane.horse.x = x;
+            lane.horse.y = bob;
 
             lane.star.clear();
             if (runner.selection_id === favouriteSelection && maxProb > 0) {
-              const sx = x - 24;
+              const sx = x - 32;
               const spikes = 5;
               const outer = 6;
               const inner = 2.6;

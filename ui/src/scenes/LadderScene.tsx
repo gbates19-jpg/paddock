@@ -5,7 +5,12 @@ import { ticksBetween, tickDown, tickUp } from "../lib/ticks";
 import { colors, colorsCss, fonts } from "../theme";
 
 const DEPTH_ROWS = 3;
-const LADDER_WINDOW = 10;
+// Rows above and below the centre price. The ladder is CENTRED ON LTP —
+// last traded is the one price that moves when something actually happens,
+// so it stays pinned mid-screen and the book slides around it (the way a
+// real trading ladder scrolls) rather than the window being re-derived from
+// whatever sparse levels the feed reported this tick.
+const HALF_WINDOW = 7;
 
 function maxSize(levels: PriceLevel[]): number {
   return Math.max(1, ...levels.map((l) => l.size));
@@ -49,6 +54,7 @@ function LadderRow({
   maxLaySize,
   ordersAtPrice,
   isSpread,
+  isLtp,
 }: {
   price: number;
   backSize: number;
@@ -57,6 +63,7 @@ function LadderRow({
   maxLaySize: number;
   ordersAtPrice: OrderEvent[];
   isSpread: boolean;
+  isLtp: boolean;
 }) {
   return (
     <div
@@ -65,7 +72,9 @@ function LadderRow({
         gridTemplateColumns: "1fr 90px 1fr",
         alignItems: "center",
         height: 30,
-        background: isSpread ? "rgba(255,255,255,0.02)" : "transparent",
+        borderRadius: 6,
+        background: isLtp ? "rgba(79, 209, 255, 0.08)" : isSpread ? "rgba(255,255,255,0.02)" : "transparent",
+        boxShadow: isLtp ? "inset 0 0 0 1px rgba(79, 209, 255, 0.35)" : undefined,
       }}
     >
       <div style={{ display: "flex", justifyContent: "flex-end" }}>
@@ -97,7 +106,7 @@ function LadderRow({
           fontFamily: fonts.mono,
           fontSize: 13,
           fontWeight: 600,
-          color: backSize > 0 || laySize > 0 ? colors.text : colors.textFaint,
+          color: isLtp ? colorsCss.price : backSize > 0 || laySize > 0 ? colors.text : colors.textFaint,
         }}
       >
         {price.toFixed(2)}
@@ -157,6 +166,10 @@ export function LadderScene() {
   const orders = Object.values(ordersByRunner[key] ?? {});
 
   const hasDepth = !!rp && (rp.back.length > 0 || rp.lay.length > 0);
+  const observedBack = rp?.back.slice(0, DEPTH_ROWS) ?? [];
+  const observedLay = rp?.lay.slice(0, DEPTH_ROWS) ?? [];
+  const bestBack = observedBack[0]?.price;
+  const bestLay = observedLay[0]?.price;
 
   const backMatched = orders.filter((o) => o.side === "back").reduce((s, o) => s + o.matched_size, 0);
   const layMatched = orders.filter((o) => o.side === "lay").reduce((s, o) => s + o.matched_size, 0);
@@ -237,29 +250,30 @@ export function LadderScene() {
           )}
           <div style={{ position: "relative" }}>
             {(() => {
-              const observedBack = rp.back.slice(0, DEPTH_ROWS);
-              const observedLay = rp.lay.slice(0, DEPTH_ROWS);
               const maxBack = maxSize(observedBack);
               const maxLay = maxSize(observedLay);
-              const bestBack = observedBack[0]?.price;
-              const bestLay = observedLay[0]?.price;
 
-              // Fill the gap between best-lay and best-back, AND a few
-              // ticks beyond each touch price, with real ladder ticks —
-              // not just the sparse levels the feed happened to report.
-              // A tight one-tick spread (common near the top of the book)
-              // would otherwise render as just two floating bars; real
-              // ladders always show empty rows beyond the touch too.
-              const rawHi = Math.max(bestLay ?? 0, bestBack ?? 0, ...orders.map((o) => o.price));
-              const rawLo = Math.min(bestLay ?? rawHi, bestBack ?? rawHi, ...orders.map((o) => o.price));
-              const hi = rawHi > 0 ? tickUp(tickUp(rawHi)) : 0;
-              const lo = rawHi > 0 ? tickDown(tickDown(rawLo)) : 0;
-              const tickRows = hi > 0 ? ticksBetween(lo, hi, LADDER_WINDOW) : [];
+              // Centre on LTP (fall back to the mid of the touch, then to
+              // whatever we have) and lay out HALF_WINDOW real ticks either
+              // side. Observed depth beyond the window is simply off-screen,
+              // like a real ladder — it is NOT pulled in to stretch the window,
+              // which is what made the old ladder jump about.
+              const touchMid = bestBack != null && bestLay != null ? (bestBack + bestLay) / 2 : bestBack ?? bestLay ?? null;
+              const centre = rp.ltp ?? touchMid ?? orders[0]?.price ?? 0;
+              let hi = centre;
+              let lo = centre;
+              for (let i = 0; i < HALF_WINDOW; i++) {
+                hi = tickUp(hi);
+                lo = tickDown(lo);
+              }
+              const tickRows = centre > 0 ? ticksBetween(lo, hi, HALF_WINDOW * 2 + 1) : [];
+              const inWindow = (p: number) => p >= lo - 1e-9 && p <= hi + 1e-9;
 
               const prices = new Set<number>(tickRows);
-              observedBack.forEach((l) => prices.add(l.price));
-              observedLay.forEach((l) => prices.add(l.price));
-              orders.forEach((o) => prices.add(o.price));
+              // off-grid levels (data quirks) still get a row if inside the window
+              observedBack.forEach((l) => inWindow(l.price) && prices.add(l.price));
+              observedLay.forEach((l) => inWindow(l.price) && prices.add(l.price));
+              orders.forEach((o) => inWindow(o.price) && prices.add(o.price));
               const sortedPrices = Array.from(prices).sort((a, b) => b - a);
 
               return sortedPrices.map((price) => {
@@ -277,13 +291,22 @@ export function LadderScene() {
                     maxLaySize={maxLay}
                     ordersAtPrice={ordersAtPrice}
                     isSpread={isSpread}
+                    isLtp={rp.ltp != null && Math.abs(price - rp.ltp) < 1e-6}
                   />
                 );
               });
             })()}
           </div>
-          <div style={{ marginTop: 12, fontFamily: fonts.mono, fontSize: 12, color: colors.textDim }}>
-            ltp {rp.ltp ?? "—"} {isGreen && <span style={{ color: colorsCss.pnlPos }}>· hedged flat</span>}
+          <div style={{ marginTop: 12, fontFamily: fonts.mono, fontSize: 12, color: colors.textDim, display: "flex", gap: 12 }}>
+            <span>
+              ltp <span style={{ color: colorsCss.price }}>{rp.ltp ?? "—"}</span>
+            </span>
+            {bestBack != null && bestLay != null && (
+              <span>
+                touch {bestBack.toFixed(2)} / {bestLay.toFixed(2)}
+              </span>
+            )}
+            {isGreen && <span style={{ color: colorsCss.pnlPos }}>· hedged flat</span>}
           </div>
         </div>
       )}

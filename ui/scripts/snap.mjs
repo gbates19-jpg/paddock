@@ -179,7 +179,7 @@ async function main() {
     await waitForServer(BASE_URL, 20_000);
     console.log("Dev server is up.");
 
-    const browser = await chromium.launch();
+    const browser = await chromium.launch(process.env.PW_EXECUTABLE ? { executablePath: process.env.PW_EXECUTABLE } : {});
     for (const viewport of VIEWPORTS) {
       await captureViewport(browser, viewport, consoleErrors, expectedFiles);
     }

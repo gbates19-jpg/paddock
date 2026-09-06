@@ -1,5 +1,3 @@
-import { AnimatePresence, motion } from "framer-motion";
-import type { CSSProperties } from "react";
 import { useEffect, useState } from "react";
 import { startConnection } from "./lib/connection";
 import { BookScene } from "./scenes/BookScene";
@@ -10,49 +8,18 @@ import type { Scene } from "./store/eventStore";
 import { useEventStore } from "./store/eventStore";
 import { colors, colorsCss, fonts } from "./theme";
 
-const STATUS_LABEL: Record<string, string> = {
-  connecting: "CONNECTING",
-  connected: "LIVE",
-  disconnected: "DISCONNECTED",
-  demo: "DEMO",
-};
-
-const STATUS_COLOR: Record<string, string> = {
-  connecting: colorsCss.signal,
-  connected: colorsCss.pnlPos,
-  disconnected: colorsCss.rejected,
-  demo: colorsCss.price,
-};
-
 const SCENE_LABEL: Record<Scene, string> = {
   floor: "THE FLOOR",
   paddock: "THE PADDOCK",
   ladder: "THE LADDER",
 };
 
-// Note: NOT position:absolute-relative-to-viewport — that was a real bug.
-// Scenes (Paddock, Ladder) have their own content starting at the top of
-// their container, and either painted over these badges (Paddock's root
-// div is position:relative, which — per CSS stacking rules — promotes it
-// into the same "positioned, z-index:auto" bucket as these badges, and
-// being later in the DOM it then paints on top of them) or visually
-// collided with them (Ladder's own header row, with no reserved
-// clearance). Found both via the very first real screenshots this UI
-// ever got (scripts/snap.mjs) — never caught without actually rendering
-// it. Fixed by making the header a real flex row that scenes render
-// below, not a floating overlay on top of whatever a scene draws.
-const badgeStyle: CSSProperties = {
-  padding: "6px 12px",
-  borderRadius: 999,
-  background: colors.panel,
-  border: `1px solid ${colors.panelBorder}`,
-  backdropFilter: "blur(8px)",
-  fontSize: 12,
-  letterSpacing: "0.08em",
-  fontFamily: fonts.mono,
-  whiteSpace: "nowrap",
-};
-
+// The header is ONLY the scene tabs. Connection/mode/P&L/speed all live in
+// the single Book HUD at the bottom (scenes/BookScene.tsx) — one place for
+// the run's vitals, not a floating badge cluster competing with it. It is a
+// real flex row scenes render below, not an overlay (an earlier overlay
+// version got painted over by the Paddock's positioned root — caught by
+// scripts/snap.mjs, never by reading the code).
 function useIsNarrow(): boolean {
   const [narrow, setNarrow] = useState(() => window.innerWidth < 640);
   useEffect(() => {
@@ -61,53 +28,6 @@ function useIsNarrow(): boolean {
     return () => window.removeEventListener("resize", onResize);
   }, []);
   return narrow;
-}
-
-function ConnectionBadge() {
-  const connection = useEventStore((s) => s.connection);
-  return (
-    <AnimatePresence mode="wait">
-      <motion.div
-        key={connection}
-        initial={{ opacity: 0, y: -6 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: -6 }}
-        transition={{ duration: 0.2 }}
-        style={{ ...badgeStyle, color: STATUS_COLOR[connection] }}
-      >
-        ● {STATUS_LABEL[connection]}
-      </motion.div>
-    </AnimatePresence>
-  );
-}
-
-function ModeBadge() {
-  const runConfig = useEventStore((s) => s.runConfig);
-  if (!runConfig) return null;
-
-  const isOptimistic = runConfig.fill_model === "ltp_cross";
-  const label = isOptimistic
-    ? `${runConfig.mode.toUpperCase()} · ${runConfig.fill_model} (optimistic)`
-    : `${runConfig.mode.toUpperCase()} · ${runConfig.fill_model}`;
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: -6 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.2 }}
-      title={
-        isOptimistic
-          ? "ltp_cross is an optimistic approximation for Basic Plan data — P&L is an upper bound, not a backtest result."
-          : undefined
-      }
-      style={{
-        ...badgeStyle,
-        color: isOptimistic ? colorsCss.optimistic : colors.textDim,
-      }}
-    >
-      {label}
-    </motion.div>
-  );
 }
 
 function SceneTabs({ narrow }: { narrow: boolean }) {
@@ -160,10 +80,31 @@ function Header({ narrow }: { narrow: boolean }) {
       }}
     >
       <SceneTabs narrow={narrow} />
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
-        <ConnectionBadge />
-        {!narrow && <ModeBadge />}
+      <div
+        style={{
+          fontFamily: fonts.mono,
+          fontSize: 11,
+          letterSpacing: "0.18em",
+          color: colors.textFaint,
+          alignSelf: "center",
+        }}
+      >
+        PADDOCK
       </div>
+    </div>
+  );
+}
+
+// Ambient background: two slow-drifting radial glows behind everything.
+// Pure CSS (index.css @keyframes), no per-frame JS, and it stops under
+// prefers-reduced-motion — cheap enough to leave on for the phone view,
+// unlike the animated grain this replaced.
+function AmbientBackground() {
+  return (
+    <div aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 0 }}>
+      <div className="ambient-glow ambient-glow-a" />
+      <div className="ambient-glow ambient-glow-b" />
+      <div className="ambient-vignette" />
     </div>
   );
 }
@@ -181,10 +122,13 @@ export default function App() {
         display: "flex",
         flexDirection: "column",
         background: colors.bgHex,
+        position: "relative",
+        overflow: "hidden",
       }}
     >
+      <AmbientBackground />
       <Header narrow={narrow} />
-      <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
+      <div style={{ position: "relative", flex: 1, minHeight: 0, zIndex: 1 }}>
         {scene === "floor" && <FloorScene />}
         {scene === "paddock" && <PaddockScene />}
         {scene === "ladder" && <LadderScene />}

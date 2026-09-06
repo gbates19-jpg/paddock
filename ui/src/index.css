@@ -25,3 +25,47 @@ body {
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   overflow: hidden;
 }
+
+/* Ambient background (App.tsx <AmbientBackground/>): slow drifting glows.
+   Transform/opacity only, so it composites on the GPU and costs ~nothing;
+   frozen entirely under prefers-reduced-motion. */
+.ambient-glow {
+  position: absolute;
+  width: 70vmax;
+  height: 70vmax;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.22;
+  will-change: transform;
+}
+.ambient-glow-a {
+  left: -25vmax;
+  top: -30vmax;
+  background: radial-gradient(circle, #1e4e8a 0%, rgba(30, 78, 138, 0) 65%);
+  animation: ambient-drift-a 38s ease-in-out infinite alternate;
+}
+.ambient-glow-b {
+  right: -30vmax;
+  bottom: -35vmax;
+  background: radial-gradient(circle, #5a2d6e 0%, rgba(90, 45, 110, 0) 65%);
+  animation: ambient-drift-b 47s ease-in-out infinite alternate;
+}
+.ambient-vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, rgba(5, 7, 13, 0) 45%, rgba(5, 7, 13, 0.75) 100%);
+}
+@keyframes ambient-drift-a {
+  from { transform: translate(0, 0) scale(1); }
+  to { transform: translate(18vmax, 12vmax) scale(1.15); }
+}
+@keyframes ambient-drift-b {
+  from { transform: translate(0, 0) scale(1.1); }
+  to { transform: translate(-16vmax, -14vmax) scale(0.95); }
+}
+@keyframes book-blink {
+  50% { opacity: 0.25; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ambient-glow { animation: none; }
+}

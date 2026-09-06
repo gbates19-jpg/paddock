@@ -171,7 +171,7 @@ export function FloorScene() {
 
     (async () => {
       await app.init({
-        background: colors.bg,
+        backgroundAlpha: 0, // App's ambient background shows through
         resizeTo: host,
         antialias: true,
       });
