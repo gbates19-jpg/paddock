@@ -170,6 +170,10 @@ class RunConfig(BaseEvent):
     mode: str
     fill_model: str
     commission_rate: float
+    # The value at run start — POST /sim/speed can change it live
+    # afterwards (paddock.sim.pacing.SpeedControl); the Book HUD's slider
+    # tracks its own optimistic local state rather than re-reading this.
+    speed: float
 
 
 class LogEvent(BaseEvent):

@@ -58,20 +58,33 @@ from typing import Callable
 from flumine.markets.middleware import Middleware
 
 
+class SpeedControl:
+    """Mutable box around the current speed value — lets something
+    outside the middleware (paddock.api.main's POST /sim/speed) change the
+    replay speed of an in-progress run. See paddock.sim.harness for how a
+    run registers its SpeedControl so the API can find it by run_id."""
+
+    def __init__(self, value: float):
+        self.value = value
+
+
 class WallClockPacingMiddleware(Middleware):
     def __init__(
         self,
-        speed: float = 20.0,
+        speed: float | SpeedControl = 20.0,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
     ):
-        self.speed = speed
+        self.speed_control = speed if isinstance(speed, SpeedControl) else SpeedControl(speed)
         self._clock = clock
         self._sleep = sleep
-        self._anchors: dict[str, tuple[float, float]] = {}  # market_id -> (market_epoch_0, wall_0)
+        # market_id -> (market_epoch_0, wall_0, speed_at_anchor)
+        self._anchors: dict[str, tuple[float, float, float]] = {}
 
     def __call__(self, market) -> None:
-        if self.speed <= 0:
+        speed = self.speed_control.value
+        if speed <= 0:
+            self._anchors.pop(market.market_id, None)
             return
         market_book = market.market_book
         if market_book is None or market_book.publish_time_epoch is None:
@@ -81,12 +94,15 @@ class WallClockPacingMiddleware(Middleware):
         wall_now = self._clock()
 
         anchor = self._anchors.get(market.market_id)
-        if anchor is None:
-            self._anchors[market.market_id] = (market_epoch, wall_now)
+        # A live speed change (POST /sim/speed) invalidates the old anchor
+        # — re-anchor at the new speed from this tick, rather than trying
+        # to blend old/new speed math for ticks that straddle the change.
+        if anchor is None or anchor[2] != speed:
+            self._anchors[market.market_id] = (market_epoch, wall_now, speed)
             return
 
-        market_epoch_0, wall_0 = anchor
-        target_wall_elapsed = (market_epoch - market_epoch_0) / self.speed
+        market_epoch_0, wall_0, _ = anchor
+        target_wall_elapsed = (market_epoch - market_epoch_0) / speed
         actual_wall_elapsed = wall_now - wall_0
         sleep_for = target_wall_elapsed - actual_wall_elapsed
         if sleep_for > 0:

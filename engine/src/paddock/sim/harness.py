@@ -26,10 +26,16 @@ from paddock.sim import store
 from paddock.sim.clients import build_replay_client
 from paddock.sim.fill_models import LtpCrossMiddleware
 from paddock.sim.logging_control import PaddockLoggingControl
-from paddock.sim.pacing import WallClockPacingMiddleware
+from paddock.sim.pacing import SpeedControl, WallClockPacingMiddleware
 from paddock.sim.runner_price import DEFAULT_MAX_PER_SECOND, RunnerPriceMiddleware
 
 logger = logging.getLogger(__name__)
+
+# run_id -> SpeedControl for whatever run(s) are currently in progress —
+# lets paddock.api.main's POST /sim/speed reach a live run's pacing
+# middleware. Single process, no Redis (per the Phase 0 stack decision),
+# so a plain module-level dict is the whole "registry".
+ACTIVE_RUN_SPEEDS: dict[str, SpeedControl] = {}
 
 
 class FillModelError(ValueError):
@@ -127,14 +133,19 @@ def run_simulation(
         )
 
     bus.publish(
-        RunConfig(run_id=run_id, mode=mode, fill_model=fill_model, commission_rate=commission_rate)
+        RunConfig(
+            run_id=run_id, mode=mode, fill_model=fill_model, commission_rate=commission_rate, speed=speed
+        )
     )
+
+    speed_control = SpeedControl(speed)
+    ACTIVE_RUN_SPEEDS[run_id] = speed_control
 
     bus.publish(WorkerHeartbeat(name="data_loader", state=WorkerState.BUSY, last_latency_ms=None))
     client = build_replay_client(commission_rate)
     framework = FlumineSimulation(client=client)
     framework.add_strategy(strategy)
-    framework.add_market_middleware(WallClockPacingMiddleware(speed=speed))
+    framework.add_market_middleware(WallClockPacingMiddleware(speed=speed_control))
     framework.add_market_middleware(RunnerPriceMiddleware(bus=bus, max_per_second=runner_price_rate))
     if fill_model == "ltp_cross":
         framework.add_market_middleware(LtpCrossMiddleware())
@@ -151,6 +162,7 @@ def run_simulation(
         bus.publish(WorkerHeartbeat(name="stream", state=WorkerState.IDLE, last_latency_ms=None))
         bus.publish(WorkerHeartbeat(name="executor", state=WorkerState.IDLE, last_latency_ms=None))
         bus.publish(WorkerHeartbeat(name="pnl", state=WorkerState.IDLE, last_latency_ms=None))
+        ACTIVE_RUN_SPEEDS.pop(run_id, None)
 
     _record_final_orders(framework, run_id, data_dir)
 
