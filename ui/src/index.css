@@ -1,11 +1,15 @@
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/inter/700.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
+@import "@fontsource/jetbrains-mono/700.css";
+
 :root {
   color-scheme: dark;
-  --bg: #05070d;
-  --panel: rgba(20, 26, 41, 0.72);
-  --border: rgba(255, 255, 255, 0.08);
-  --text: #d7dce6;
-  --text-dim: #7c8496;
-  --accent: #4fd1ff;
+  --bg: #0a0c11;
+  --text: #e8eaf0;
 }
 
 * {
@@ -22,50 +26,47 @@ body,
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   overflow: hidden;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* Ambient background (App.tsx <AmbientBackground/>): slow drifting glows.
-   Transform/opacity only, so it composites on the GPU and costs ~nothing;
-   frozen entirely under prefers-reduced-motion. */
-.ambient-glow {
-  position: absolute;
-  width: 70vmax;
-  height: 70vmax;
-  border-radius: 50%;
-  filter: blur(80px);
-  opacity: 0.22;
-  will-change: transform;
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
 }
-.ambient-glow-a {
-  left: -25vmax;
-  top: -30vmax;
-  background: radial-gradient(circle, #1e4e8a 0%, rgba(30, 78, 138, 0) 65%);
-  animation: ambient-drift-a 38s ease-in-out infinite alternate;
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
 }
-.ambient-glow-b {
-  right: -30vmax;
-  bottom: -35vmax;
-  background: radial-gradient(circle, #5a2d6e 0%, rgba(90, 45, 110, 0) 65%);
-  animation: ambient-drift-b 47s ease-in-out infinite alternate;
+::-webkit-scrollbar-track {
+  background: transparent;
 }
-.ambient-vignette {
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(ellipse at center, rgba(5, 7, 13, 0) 45%, rgba(5, 7, 13, 0.75) 100%);
+
+/* One-shot flash: a value just changed, then settles. Never a continuous
+   pulse — see lib/hooks.ts useFlash. Applied as a class toggle, not a
+   permanent animation, and only while the class is present. */
+@keyframes flash-good {
+  0% { background-color: rgba(51, 193, 122, 0.22); }
+  100% { background-color: transparent; }
 }
-@keyframes ambient-drift-a {
-  from { transform: translate(0, 0) scale(1); }
-  to { transform: translate(18vmax, 12vmax) scale(1.15); }
+@keyframes flash-bad {
+  0% { background-color: rgba(226, 86, 79, 0.22); }
+  100% { background-color: transparent; }
 }
-@keyframes ambient-drift-b {
-  from { transform: translate(0, 0) scale(1.1); }
-  to { transform: translate(-16vmax, -14vmax) scale(0.95); }
+@keyframes flash-ours {
+  0% { background-color: rgba(240, 169, 60, 0.22); }
+  100% { background-color: transparent; }
 }
-@keyframes book-blink {
-  50% { opacity: 0.25; }
+.flash-good { animation: flash-good 700ms ease-out; }
+.flash-bad { animation: flash-bad 700ms ease-out; }
+.flash-ours { animation: flash-ours 700ms ease-out; }
+
+@keyframes soft-blink {
+  50% { opacity: 0.3; }
 }
+.blink { animation: soft-blink 1.1s ease-in-out infinite; }
+
 @media (prefers-reduced-motion: reduce) {
-  .ambient-glow { animation: none; }
+  .flash-good, .flash-bad, .flash-ours, .blink { animation: none !important; }
 }

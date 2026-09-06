@@ -1,69 +1,63 @@
-// Single source of truth for colour/spacing/type across all scenes — one
-// accent per event family, used consistently everywhere rather than each
-// scene picking its own palette.
+// Single source of truth for colour/spacing/type across every screen.
+//
+// v2 design language (see project doc paddock-ui-v2-brief.md):
+//   - near-black ground, two panel tones for depth, hairline borders —
+//     depth from LAYERING, not glow/blur.
+//   - ONE accent (amber) means "ours": any order, position, or exposure
+//     we hold. Market data on its own is neutral grey/white.
+//   - green/red are reserved for MONEY only (P&L, if-win/if-lose) — never
+//     used to mean "good state" or "bad state" elsewhere.
+//   - back = blue, lay = pink, Betfair's own convention, so the ladder
+//     reads without a legend.
 export const colors = {
-  bg: 0x05070d,
-  bgHex: "#05070d",
-  panel: "rgba(20, 26, 41, 0.72)",
-  panelBorder: "rgba(255,255,255,0.08)",
-  grid: 0x1b2333,
-  text: "#e4e8f0",
-  textDim: "#7c8496",
-  textFaint: "#4a5468",
+  bg: "#0a0c11",
+  bgHex: "#0a0c11",
+  panel: "#12151d", // raised one layer
+  panel2: "#181c26", // raised two layers (rows, cards within panels)
+  panelBorder: "rgba(255,255,255,0.07)",
+  panelBorderStrong: "rgba(255,255,255,0.14)",
 
-  // event-family accents (bus event `type` prefix -> colour), used by
-  // Floor's particles/rings, Paddock's pulses, Ladder's chips, Book's log
-  price: 0x4fd1ff, // runner.price
-  signal: 0xffb84f, // strategy.signal
-  placed: 0x8affc1, // order.placed
-  matched: 0x35e07a, // order.matched
-  cancelled: 0x8a93a6, // order.cancelled / lapsed
-  rejected: 0xff4d6d, // order.rejected / position.unhedged
-  pnlPos: 0x35e07a,
-  pnlNeg: 0xff4d6d,
-  optimistic: 0xffb84f, // ltp_cross badge
+  text: "#e8eaf0",
+  textDim: "#8891a3",
+  textFaint: "#525a6b",
 
-  back: 0x4fd1ff,
-  lay: 0xff8a5c,
+  ours: "#f0a93c", // the one accent — anything we own
+  oursDim: "rgba(240, 169, 60, 0.14)",
 
-  idle: 0x3a4a63,
-  busy: 0x4fd1ff,
-  error: 0xff4d6d,
+  back: "#3d8bfd",
+  backDim: "rgba(61, 139, 253, 0.14)",
+  lay: "#ef5da8",
+  layDim: "rgba(239, 93, 168, 0.14)",
+
+  pos: "#33c17a", // money up
+  neg: "#e2564f", // money down
+  posDim: "rgba(51, 193, 122, 0.14)",
+  negDim: "rgba(226, 86, 79, 0.14)",
+
+  live: "#33c17a",
+  warn: "#e0a530",
+  idle: "#525a6b",
 } as const;
-
-export const colorsCss = {
-  price: "#4fd1ff",
-  signal: "#ffb84f",
-  placed: "#8affc1",
-  matched: "#35e07a",
-  cancelled: "#8a93a6",
-  rejected: "#ff4d6d",
-  pnlPos: "#35e07a",
-  pnlNeg: "#ff4d6d",
-  optimistic: "#ffb84f",
-  back: "#4fd1ff",
-  lay: "#ff8a5c",
-} as const;
-
-export const eventColor = (eventType: string): number => {
-  if (eventType.startsWith("runner.price")) return colors.price;
-  if (eventType.startsWith("strategy.")) return colors.signal;
-  if (eventType === "order.placed") return colors.placed;
-  if (eventType === "order.matched") return colors.matched;
-  if (eventType === "order.cancelled" || eventType === "order.lapsed") return colors.cancelled;
-  if (eventType === "order.rejected" || eventType === "position.unhedged") return colors.rejected;
-  if (eventType.startsWith("pnl.")) return colors.pnlPos;
-  return colors.textDim as unknown as number;
-};
 
 export const spacing = { xs: 4, sm: 8, md: 16, lg: 24, xl: 32 };
 
 export const fonts = {
-  mono: "ui-monospace, SFMono-Regular, Menlo, monospace",
-  sans: "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif",
+  // @fontsource/inter and @fontsource/jetbrains-mono, self-hosted (see
+  // index.css imports) — no CDN, so the phone view never blocks on a
+  // font request over the tailnet.
+  sans: "'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif",
+  mono: "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
 };
 
-export const isMobile = () => typeof window !== "undefined" && window.innerWidth < 640;
+export const radius = { sm: 6, md: 10, lg: 14 };
+
+export const isMobile = () => typeof window !== "undefined" && window.innerWidth < 720;
 
 export const prefersReducedMotion = () =>
   typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+export function moneyColor(n: number): string {
+  if (n > 0.004) return colors.pos;
+  if (n < -0.004) return colors.neg;
+  return colors.textDim;
+}

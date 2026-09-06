@@ -9,18 +9,10 @@ import type {
   Snapshot,
   WorkerHeartbeat,
 } from "../lib/events";
+import { type StoryEntry, storyFor } from "../lib/story";
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "demo";
-export type Scene = "floor" | "paddock" | "ladder";
-
-interface Particle {
-  id: string;
-  from: string;
-  to: string;
-  kind: string;
-  size: number;
-  bornAt: number;
-}
+export type Screen = "pipeline" | "race" | "ladder";
 
 export interface SelectedRunner {
   marketId: string;
@@ -31,71 +23,90 @@ export function runnerKey(marketId: string, selectionId: number): string {
   return `${marketId}:${selectionId}`;
 }
 
+// A short-lived flow mark for the Pipeline's connecting channels — born
+// when an event crosses a stage boundary, pruned a moment later by the
+// component that draws it. Kept separate from the story feed: this is
+// motion, the story is the record.
+export interface FlowMark {
+  id: string;
+  from: string;
+  to: string;
+  kind: string;
+  bornAt: number;
+}
+
+const RATE_WINDOW_MS = 15_000;
+const STORY_LIMIT = 400;
+
 interface EventStoreState {
   connection: ConnectionStatus;
   workers: Record<string, WorkerHeartbeat>;
   markets: Record<string, MarketOpen>;
+  closedMarkets: Record<string, number>; // market_id -> ts_ms closed
   runnerPrices: Record<string, RunnerPrice>;
+  prevLtp: Record<string, number>; // runnerKey -> ltp before the latest tick, for direction arrows
+  tickDir: Record<string, 1 | -1 | 0>;
   ordersByRunner: Record<string, Record<string, OrderEvent>>;
   pnl: PnlUpdate | null;
   runConfig: RunConfig | null;
-  particles: Particle[];
-  log: PaddockEvent[];
-  scene: Scene;
+  story: StoryEntry[];
+  flowMarks: FlowMark[];
+  recentTickTs: number[]; // runner.price event timestamps, for a rate display
+  recentSignalTs: number[];
+  pnlHistory: number[]; // run_pnl at each pnl.update, for the Book's sparkline
+  screen: Screen;
   selectedRunner: SelectedRunner | null;
 
   setConnection: (s: ConnectionStatus) => void;
   applySnapshot: (snapshot: Snapshot) => void;
   applyEvent: (event: PaddockEvent) => void;
-  pruneParticle: (id: string) => void;
-  setScene: (scene: Scene) => void;
+  pruneFlowMark: (id: string) => void;
+  setScreen: (screen: Screen) => void;
   selectRunner: (marketId: string, selectionId: number) => void;
   clearSelectedRunner: () => void;
 }
 
-let particleCounter = 0;
+let flowCounter = 0;
 
-function particleFor(event: PaddockEvent): Particle | null {
-  const map: Record<string, [string, string]> = {
-    "runner.price": ["stream", "executor"],
-    "strategy.signal": ["executor", "executor"],
-    "order.placed": ["executor", "executor"],
-    "order.matched": ["executor", "pnl"],
-    "order.cancelled": ["executor", "executor"],
-    "order.lapsed": ["executor", "executor"],
-  };
-  const edge = map[event.type];
+// Which pipeline stage boundary an event's flow mark crosses.
+const FLOW_EDGE: Record<string, [string, string] | undefined> = {
+  "runner.price": ["stream", "strategy"],
+  "strategy.signal": ["strategy", "executor"],
+  "order.placed": ["executor", "executor"],
+  "order.matched": ["executor", "book"],
+  "order.cancelled": ["executor", "executor"],
+  "order.lapsed": ["executor", "executor"],
+  "pnl.update": ["executor", "book"],
+};
+
+function flowMarkFor(event: PaddockEvent): FlowMark | null {
+  const edge = FLOW_EDGE[event.type];
   if (!edge) return null;
-  let size = 4;
-  if ("size" in event && typeof event.size === "number") size = Math.max(3, Math.min(14, event.size));
-  if ("matched_size" in event && event.matched_size) size = Math.max(size, Math.min(18, event.matched_size));
-  return {
-    id: `p${particleCounter++}`,
-    from: edge[0],
-    to: edge[1],
-    kind: event.type,
-    size,
-    bornAt: performance.now(),
-  };
+  return { id: `f${flowCounter++}`, from: edge[0], to: edge[1], kind: event.type, bornAt: performance.now() };
 }
 
 export const useEventStore = create<EventStoreState>((set) => ({
   connection: "connecting",
   workers: {},
   markets: {},
+  closedMarkets: {},
   runnerPrices: {},
+  prevLtp: {},
+  tickDir: {},
   ordersByRunner: {},
   pnl: null,
   runConfig: null,
-  particles: [],
-  log: [],
-  scene: "floor",
+  story: [],
+  flowMarks: [],
+  recentTickTs: [],
+  recentSignalTs: [],
+  pnlHistory: [],
+  screen: "pipeline",
   selectedRunner: null,
 
   setConnection: (connection) => set({ connection }),
-  setScene: (scene) => set({ scene }),
-  selectRunner: (marketId, selectionId) =>
-    set({ scene: "ladder", selectedRunner: { marketId, selectionId } }),
+  setScreen: (screen) => set({ screen }),
+  selectRunner: (marketId, selectionId) => set({ screen: "ladder", selectedRunner: { marketId, selectionId } }),
   clearSelectedRunner: () => set({ selectedRunner: null }),
 
   applySnapshot: (snapshot) =>
@@ -121,19 +132,46 @@ export const useEventStore = create<EventStoreState>((set) => ({
     set((state) => {
       const next: Partial<EventStoreState> = {};
 
+      // storyFor needs the state as it was BEFORE this event is applied
+      // (e.g. "matched" phrasing needs the order's previous matched_size,
+      // and market.close needs the market that's about to be marked
+      // closed while it's still keyed in `markets`).
+      let previousOrder: OrderEvent | undefined;
+      if (
+        event.type === "order.placed" ||
+        event.type === "order.matched" ||
+        event.type === "order.cancelled" ||
+        event.type === "order.lapsed"
+      ) {
+        previousOrder = state.ordersByRunner[runnerKey(event.market_id, event.selection_id)]?.[event.order_id];
+      }
+      const entry = storyFor(event, { markets: state.markets, previousOrder, runPnlBefore: state.pnl?.run_pnl ?? 0 });
+
       if (event.type === "worker.heartbeat") {
         next.workers = { ...state.workers, [event.name]: event };
       } else if (event.type === "market.open") {
         next.markets = { ...state.markets, [event.market_id]: event };
+        if (state.closedMarkets[event.market_id]) {
+          const closedMarkets = { ...state.closedMarkets };
+          delete closedMarkets[event.market_id];
+          next.closedMarkets = closedMarkets;
+        }
       } else if (event.type === "market.close") {
-        const markets = { ...state.markets };
-        delete markets[event.market_id];
-        next.markets = markets;
+        // Kept in `markets` (not deleted) so the Race card can show a
+        // CLOSED pill instead of the market just vanishing — the old v1
+        // behaviour deleted it here, which is also why v1 had nothing to
+        // say about a market that had just gone off.
+        next.closedMarkets = { ...state.closedMarkets, [event.market_id]: event.ts_ms };
       } else if (event.type === "runner.price") {
-        next.runnerPrices = {
-          ...state.runnerPrices,
-          [runnerKey(event.market_id, event.selection_id)]: event,
-        };
+        const key = runnerKey(event.market_id, event.selection_id);
+        const prior = state.runnerPrices[key];
+        if (prior?.ltp != null) next.prevLtp = { ...state.prevLtp, [key]: prior.ltp };
+        if (prior?.ltp != null && event.ltp != null) {
+          const dir = event.ltp > prior.ltp ? 1 : event.ltp < prior.ltp ? -1 : 0;
+          next.tickDir = { ...state.tickDir, [key]: dir };
+        }
+        next.runnerPrices = { ...state.runnerPrices, [key]: event };
+        next.recentTickTs = [...state.recentTickTs, event.ts_ms].filter((t) => t > event.ts_ms - RATE_WINDOW_MS).slice(-500);
       } else if (
         event.type === "order.placed" ||
         event.type === "order.matched" ||
@@ -148,21 +186,20 @@ export const useEventStore = create<EventStoreState>((set) => ({
         };
       } else if (event.type === "pnl.update") {
         next.pnl = event;
+        next.pnlHistory = [...state.pnlHistory, event.run_pnl].slice(-60);
       } else if (event.type === "run.config") {
         next.runConfig = event;
+      } else if (event.type === "strategy.signal") {
+        next.recentSignalTs = [...state.recentSignalTs, event.ts_ms].filter((t) => t > event.ts_ms - 60_000).slice(-200);
       }
 
-      const particle = particleFor(event);
-      if (particle) {
-        next.particles = [...state.particles, particle].slice(-200);
-      }
+      const flowMark = flowMarkFor(event);
+      if (flowMark) next.flowMarks = [...state.flowMarks, flowMark].slice(-150);
 
-      const log = [event, ...state.log].slice(0, 300);
-      next.log = log;
+      if (entry) next.story = [entry, ...state.story].slice(0, STORY_LIMIT);
 
       return next;
     }),
 
-  pruneParticle: (id) =>
-    set((state) => ({ particles: state.particles.filter((p) => p.id !== id) })),
+  pruneFlowMark: (id) => set((state) => ({ flowMarks: state.flowMarks.filter((p) => p.id !== id) })),
 }));
