@@ -126,6 +126,39 @@ async function captureViewport(browser, viewport, consoleErrors, expectedFiles) 
   expectedFiles.push(`ladder-basic${suffix}.png`);
   await ladderBasicPage.close();
 
+  // --- Reload persistence: iOS Safari evicts backgrounded tabs and
+  // reloads them, which used to drop the whole view. Select a runner,
+  // reload as Safari would, and the ladder must still be there. ---
+  const reloadPage = await freshDemoPage("reload-persistence");
+  await reloadPage.waitForTimeout(9800);
+  await selectRunner(reloadPage, DEPTH_SELECTION_ID);
+  await reloadPage.waitForTimeout(600);
+  await reloadPage.reload({ waitUntil: "load" });
+  await reloadPage.waitForTimeout(800);
+  const restoredHeading = await reloadPage.textContent("body");
+  if (!restoredHeading.includes("Shining Guest")) {
+    throw new Error("reload persistence FAILED: ladder did not restore the selected runner after reload");
+  }
+  await reloadPage.screenshot({ path: path.join(SNAP_DIR, `reload-persistence${suffix}.png`) });
+  console.log(`Captured reload-persistence${suffix}.png (restored after reload OK)`);
+  expectedFiles.push(`reload-persistence${suffix}.png`);
+  await reloadPage.close();
+
+  // --- The Ladder's "back to race card" button: it used to only clear the
+  // selection without navigating, so it looked completely dead. ---
+  const backPage = await freshDemoPage("ladder-back");
+  await backPage.waitForTimeout(9800);
+  await selectRunner(backPage, DEPTH_SELECTION_ID);
+  await backPage.waitForTimeout(400);
+  await backPage.click("text=race card");
+  await backPage.waitForTimeout(400);
+  const afterBack = await backPage.textContent("body");
+  if (!afterBack.includes("RUNNER") || !afterBack.includes("WIN / LOSE")) {
+    throw new Error("back button FAILED: clicking '← race card' did not land on the Race card");
+  }
+  console.log(`Verified ladder-back${suffix}: '← race card' navigates to the race card`);
+  await backPage.close();
+
   // --- Ladder tab tapped directly, nothing selected yet — the tab used to
   // be disabled in this state, which just looked broken; it must now show
   // the "pick a runner" placeholder instead of nothing ---

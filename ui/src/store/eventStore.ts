@@ -10,6 +10,7 @@ import type {
   WorkerHeartbeat,
 } from "../lib/events";
 import { type StoryEntry, storyFor } from "../lib/story";
+import { loadPersisted, savePersisted, snapshotForPersist } from "./persist";
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "demo";
 export type Screen = "pipeline" | "race" | "ladder";
@@ -85,29 +86,40 @@ function flowMarkFor(event: PaddockEvent): FlowMark | null {
   return { id: `f${flowCounter++}`, from: edge[0], to: edge[1], kind: event.type, bornAt: performance.now() };
 }
 
+// Restored from sessionStorage when a backgrounded tab gets reloaded (see
+// store/persist.ts). Null on a genuinely fresh start, which is the normal
+// case — everything below falls back to its empty default.
+const restored = loadPersisted();
+
 export const useEventStore = create<EventStoreState>((set) => ({
   connection: "connecting",
+  // Deliberately NOT restored: a heartbeat we saved before being
+  // backgrounded says nothing about whether that worker is alive now.
   workers: {},
-  markets: {},
-  closedMarkets: {},
-  runnerPrices: {},
+  markets: restored?.markets ?? {},
+  closedMarkets: restored?.closedMarkets ?? {},
+  runnerPrices: restored?.runnerPrices ?? {},
   prevLtp: {},
-  tickDir: {},
-  ordersByRunner: {},
-  pnl: null,
-  runConfig: null,
-  story: [],
+  tickDir: restored?.tickDir ?? {},
+  ordersByRunner: restored?.ordersByRunner ?? {},
+  pnl: restored?.pnl ?? null,
+  runConfig: restored?.runConfig ?? null,
+  story: restored?.story ?? [],
   flowMarks: [],
+  // Rolling rate windows: restoring these would paint throughput that
+  // isn't happening. They refill within a second of reconnecting.
   recentTickTs: [],
   recentSignalTs: [],
-  pnlHistory: [],
-  screen: "pipeline",
-  selectedRunner: null,
+  pnlHistory: restored?.pnlHistory ?? [],
+  screen: restored?.screen ?? "pipeline",
+  selectedRunner: restored?.selectedRunner ?? null,
 
   setConnection: (connection) => set({ connection }),
   setScreen: (screen) => set({ screen }),
   selectRunner: (marketId, selectionId) => set({ screen: "ladder", selectedRunner: { marketId, selectionId } }),
-  clearSelectedRunner: () => set({ selectedRunner: null }),
+  // Back to the race card, keeping the runner selected so the Ladder tab
+  // returns you to it rather than to an empty placeholder.
+  clearSelectedRunner: () => set({ screen: "race" }),
 
   applySnapshot: (snapshot) =>
     set(() => {
@@ -203,3 +215,48 @@ export const useEventStore = create<EventStoreState>((set) => ({
 
   pruneFlowMark: (id) => set((state) => ({ flowMarks: state.flowMarks.filter((p) => p.id !== id) })),
 }));
+
+// --- session persistence -------------------------------------------------
+// Two writers, for two different failure modes:
+//   1. A throttled periodic write, so a hard crash or an eviction that
+//      skips the lifecycle events still loses at most a few seconds.
+//   2. A synchronous flush the moment the page is hidden — this is the one
+//      that matters on iOS, since backgrounding is exactly when Safari
+//      decides to evict the tab, and it may never run another line of our
+//      JS before reloading it.
+const PERSIST_THROTTLE_MS = 2000;
+let lastWrite = 0;
+let pending: ReturnType<typeof setTimeout> | null = null;
+
+function flush(): void {
+  lastWrite = Date.now();
+  if (pending) {
+    clearTimeout(pending);
+    pending = null;
+  }
+  savePersisted(snapshotForPersist(useEventStore.getState()));
+}
+
+export function attachPersistence(): () => void {
+  const unsubscribe = useEventStore.subscribe(() => {
+    if (pending) return;
+    const wait = Math.max(0, PERSIST_THROTTLE_MS - (Date.now() - lastWrite));
+    pending = setTimeout(flush, wait);
+  });
+
+  // pagehide is the reliable one on iOS Safari; visibilitychange covers
+  // tab switches and the desktop case. Both are cheap, so we take both.
+  const onHide = () => {
+    if (document.visibilityState === "hidden") flush();
+  };
+  const onPageHide = () => flush();
+  document.addEventListener("visibilitychange", onHide);
+  window.addEventListener("pagehide", onPageHide);
+
+  return () => {
+    unsubscribe();
+    document.removeEventListener("visibilitychange", onHide);
+    window.removeEventListener("pagehide", onPageHide);
+    if (pending) clearTimeout(pending);
+  };
+}

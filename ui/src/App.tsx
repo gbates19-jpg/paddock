@@ -5,7 +5,7 @@ import { PipelineScreen } from "./screens/PipelineScreen";
 import { RaceScreen } from "./screens/RaceScreen";
 import { BookHud } from "./components/BookHud";
 import type { Screen } from "./store/eventStore";
-import { useEventStore } from "./store/eventStore";
+import { attachPersistence, useEventStore } from "./store/eventStore";
 import { colors, fonts } from "./theme";
 
 const SCREEN_LABEL: Record<Screen, string> = {
@@ -63,6 +63,10 @@ function NavTabs() {
 
 export default function App() {
   useEffect(() => startConnection(), []);
+  // Saves the view to sessionStorage so an iOS tab eviction (switch apps,
+  // come back, Safari has reloaded the page) restores what you were
+  // looking at instead of an empty room. See store/persist.ts.
+  useEffect(() => attachPersistence(), []);
   const screen = useEventStore((s) => s.screen);
 
   return (
