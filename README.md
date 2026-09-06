@@ -102,22 +102,29 @@ logged as a loud warning (you're leaving a real backtest on the table).
 **Validated against real data, both directions:**
 - `ladder` against 6 real Aug 2015 Pro markets: real matched orders at real
   prices, flumine's own `cleared()` P&L, run_pnl=+0.08 across the sample.
-  One market needed the flat-invariant's "closer" fallback (exit never
-  crossed) and it matched cleanly.
+  One market needed the closer (exit never crossed) and it matched
+  cleanly.
 - `ladder` vs `ltp_cross` head-to-head on the *same* 6 real Sept 2026
-  Advanced markets: run_pnl was **+0.04 (ltp_cross) vs -1.96 (ladder)** on
-  this sample. The entire gap is one market (`1.261733309`) where the
-  closer order crossed under `ltp_cross`'s ltp-based rule but never
-  actually matched under `ladder` — there was no real traded volume at
-  that price before the market closed, so the "naked" back leg lost its
-  full stake. **This is a real, load-bearing limitation, not a bug**:
-  "close at market" via a resting limit order is only a guarantee under
-  `ltp_cross` (crossing is defined by ltp alone). Under `ladder`,
-  flat-at-off is only as good as the market's actual liquidity right then
-  — a real backtest can still end up with a naked position if nothing
-  trades at the closing price in time. `ltp_cross` being the *optimistic*
-  model, not `ladder` being broken, is exactly why every P&L number now
-  carries which one produced it.
+  Advanced markets — **first pass** exposed a real bug: run_pnl was
+  +0.04 (ltp_cross) vs **-1.96** (ladder). The entire gap was one market
+  (`1.261733309`) where the closer — then a *passive* limit order resting
+  at a back-side reference price — never actually matched under `ladder`,
+  leaving a naked losing position. Root cause: a resting limit order is
+  only guaranteed to close under `ltp_cross` (crossing is ltp-defined);
+  under `ladder`, "close at market" needs to actually **take** liquidity,
+  not rest and hope. Fixed: the closer now places an aggressive LAY at
+  the current best `available_to_lay` (the opposing side's touch price —
+  the price genuinely on offer right now), sized to the open position; if
+  unmatched after one tick, cancel and re-place one tick worse, up to
+  `slippage_ticks` (config, default 3) times, then give up and publish
+  `position.unhedged` + log ERROR rather than silently accept a naked
+  loss. **Re-validated after the fix**: ladder and ltp_cross now agree
+  exactly on this sample (both +0.04) — the closer matched on its first
+  liquidity-taking attempt in every case this time, so there was no
+  slippage cost to observe on this particular sample, just the bug
+  fixed. A sample where the closer has to walk ticks would show a real,
+  smaller residual gap (spread cost) instead of a naked position — that's
+  the expected remaining difference between the two models going forward.
 
 ## Sim (step 2-3)
 
@@ -138,12 +145,17 @@ minutes before off; once entry has any matched size, place EXIT (lay,
 sized to exactly what matched, a couple of ticks lower) — never before
 entry has actually matched something. At 30s before off: cancel any
 unmatched entry remainder; if entry matched but exit doesn't fully cover
-it, cancel exit's remainder and place a CLOSER order for the shortfall at
-the current crossing price ("accept the red"). Guarantees zero net
-position by market close in every reachable scenario *up to the ladder
-caveat above* — proven against synthetic market data with exact ltp
-control (`tests/test_baseline_flat_invariant.py`), not just real data
-where you can't force every scenario to occur.
+it, cancel exit's remainder and start the CLOSER retry loop for the
+shortfall — an aggressive LAY at the current best `available_to_lay`
+(taking liquidity, not resting), walking one tick worse per unmatched
+tick up to `slippage_ticks` (default 3) attempts, then giving up with
+`position.unhedged` + an ERROR log. Guarantees zero net position by
+market close in every scenario the retry loop actually resolves — proven
+against synthetic market data with exact ltp control
+(`tests/test_baseline_flat_invariant.py`, real data can't be steered to
+force every scenario) *and* against a real Aug 2015 Pro market where the
+exit genuinely never crosses and the closer has to take liquidity for
+real (`tests/test_baseline_ladder_flat_invariant.py`).
 
 Price-reading is fill-model-agnostic (reads the order-book ladder when
 present, falls back to `ltp` when it's empty) — it's the *engine*, not the

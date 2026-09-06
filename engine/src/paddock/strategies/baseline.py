@@ -22,41 +22,52 @@ position if the lay never matched):
        c. If entry matched but exit doesn't fully cover it (exit was never
           placed, only partially matched, or entry kept matching after
           exit was sized): cancel exit's remaining unmatched portion (if
-          any) and place a CLOSER order — an aggressive LAY, sized to
-          exactly the uncovered amount, at the current best-available
-          crossing price — to force the position flat before settlement.
-          This is "accept the red": no attempt to get a good price, just
-          get matched now.
-  4. This guarantees zero net position on the runner by market close in
-     every reachable scenario: entry never matched (no exit ever placed);
-     entry+exit both fully matched (flat by construction, exit size ==
-     entry size); entry matched, exit under-filled (closer order tops up
-     the shortfall). See tests/test_baseline_strategy.py for all three,
-     driven through real flumine machinery against synthetic market data
-     so the invariant is checked against actual order lifecycle, not a
-     hand-simulated one.
+          any) and start the CLOSER retry loop for the uncovered amount
+          (see below).
+  4. Closer retry loop — "take liquidity, don't rest" (revised again after
+     real-data validation showed a resting closer can fail to match under
+     fill_model=ladder if nothing actually trades at that price before the
+     market shuts): each attempt places an aggressive LAY at the CURRENT
+     best available_to_lay price (the price actually on offer right now,
+     not a passive level we hope gets traded through), sized to whatever
+     of the target is still unmatched. If still unmatched after one full
+     tick of the stream, cancel and re-place one tick worse (lower, for a
+     LAY) — up to `slippage_ticks` (config, default 3) times. If the last
+     attempt is still unmatched after its own tick, give up: log ERROR and
+     publish `position.unhedged` — a real, naked position is left open,
+     reported loudly rather than silently accepted or retried forever.
+  5. This guarantees zero net position on the runner by market close in
+     every reachable scenario *the retry loop actually resolves*: entry
+     never matched (no exit ever placed); entry+exit both fully matched
+     (flat by construction); entry matched, exit under-filled (closer
+     loop tops up the shortfall, walking price if needed). It does NOT
+     guarantee flat if fill_model=ladder and there's genuinely no
+     liquidity to take within the slippage tolerance — that's
+     `position.unhedged`, a real outcome, not a bug. See
+     tests/test_baseline_flat_invariant.py for the resolvable scenarios
+     (synthetic market data, exact ltp control) and
+     tests/test_baseline_ladder_flat_invariant.py for the same check
+     against the real Aug 2015 Pro fixture.
 
 Fill-model-agnostic, and the "best available" assumption under ltp_cross:
-_best_back_price reads runner.ex.available_to_back (fill_model=ladder /
-Advanced+Pro data) and falls back to runner.last_price_traded when that's
-empty (fill_model=ltp_cross / Basic Plan data, which carries no order
-book at all). That fallback is a real assumption, not a neutral default:
-on Basic data we have no way to know what price is actually available to
-trade at right now, so we approximate it as "the last price this
-selection actually traded at" — reasonable in a liquid, actively-traded
-market close to the off, optimistic (and potentially stale) right after a
-market opens or during a quiet patch with no recent trades. The same
-fallback is reused for the CLOSER order's crossing price at T-30s, for
-the same reason: it's the least-bad proxy for "get matched immediately"
-that Basic data actually offers. The strategy itself doesn't know or care
-which fill_model produced the price it's looking at — that split is
-enforced by the engine (paddock.sim.harness/fill_models), not here.
+_best_back_price / _best_lay_price read runner.ex.available_to_back/lay
+(fill_model=ladder / Advanced+Pro data) and fall back to
+runner.last_price_traded when that's empty (fill_model=ltp_cross / Basic
+Plan data, which carries no order book at all). That fallback is a real
+assumption, not a neutral default: on Basic data we have no way to know
+what price is actually available to trade at right now, so we approximate
+it as "the last price this selection actually traded at" — reasonable in
+a liquid, actively-traded market close to the off, optimistic (and
+potentially stale) right after a market opens or during a quiet patch
+with no recent trades. The strategy itself doesn't know or care which
+fill_model produced the price it's looking at — that split is enforced by
+the engine (paddock.sim.harness/fill_models), not here.
 """
 from __future__ import annotations
 
 import logging
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from flumine.order.order import OrderStatus
 from flumine.order.ordertype import LimitOrder
@@ -65,7 +76,7 @@ from flumine.strategy.strategy import BaseStrategy
 from flumine.utils import get_price, price_ticks_away
 
 from paddock.bus.bus import bus as default_bus
-from paddock.bus.events import StrategySignal
+from paddock.bus.events import OrderSide, PositionUnhedged, StrategySignal
 from paddock.sim.orders import place_order
 
 logger = logging.getLogger(__name__)
@@ -78,8 +89,11 @@ class _MarketState:
     favourite_selection_id: int | None = None
     entry_order: object | None = None
     exit_order: object | None = None
-    closer_order: object | None = None
     at_off_handled: bool = False
+    closer_target: float = 0.0
+    closer_orders: list = field(default_factory=list)
+    closer_placed_at_epoch: int | None = None
+    unhedged: bool = False
 
 
 class BaselineFavouriteScalp(BaseStrategy):
@@ -90,24 +104,27 @@ class BaselineFavouriteScalp(BaseStrategy):
         place_seconds_before_off: float = 300,
         cancel_seconds_before_off: float = 30,
         lay_ticks: int = 2,
+        slippage_ticks: int = 3,
         bus=None,
         **kwargs,
     ):
-        # Entry and exit are separate Trade objects on the same runner, and
-        # can be concurrently live (e.g. entry's unmatched remainder still
-        # resting while exit is live against the matched portion) —
-        # flumine's BaseStrategy default (max_live_trade_count=1) rejects
-        # the second leg as a STRATEGY_EXPOSURE violation with no
-        # exception raised, just a silently voided order (see
-        # tests/test_logging_control.py::test_order_rejected_event_fires_
-        # on_max_live_trade_count_violation for what that looks like and
-        # how it's now surfaced instead of silently swallowed).
+        # Entry and exit (and closer retries) are separate Trade objects on
+        # the same runner, and can be concurrently live (e.g. entry's
+        # unmatched remainder still resting while exit is live against the
+        # matched portion) — flumine's BaseStrategy default
+        # (max_live_trade_count=1) rejects the second leg as a
+        # STRATEGY_EXPOSURE violation with no exception raised, just a
+        # silently voided order (see
+        # tests/test_order_rejection.py::test_order_rejected_event_fires_on_
+        # max_live_trade_count_violation for what that looks like and how
+        # it's now surfaced instead of silently swallowed).
         kwargs.setdefault("max_live_trade_count", 2)
         super().__init__(*args, **kwargs)
         self.stake = stake
         self.place_seconds_before_off = place_seconds_before_off
         self.cancel_seconds_before_off = cancel_seconds_before_off
         self.lay_ticks = lay_ticks
+        self.slippage_ticks = slippage_ticks
         self.bus = bus or default_bus
         self._state: dict[str, _MarketState] = {}
 
@@ -131,10 +148,22 @@ class BaselineFavouriteScalp(BaseStrategy):
 
     @staticmethod
     def _best_back_price(runner) -> float | None:
-        # See module docstring: this is also used as the CLOSER order's
-        # crossing price, not just for entry price discovery.
         price = get_price(runner.ex.available_to_back, 0)
         return price if price else runner.last_price_traded
+
+    @staticmethod
+    def _best_lay_price(runner) -> float | None:
+        # The closer takes liquidity on the LAY side (this strategy's
+        # entry is always BACK) — the price actually on offer right now,
+        # not a level we hope gets traded through. See module docstring.
+        price = get_price(runner.ex.available_to_lay, 0)
+        return price if price else runner.last_price_traded
+
+    @staticmethod
+    def _find_runner(market_book, selection_id: int | None):
+        return next(
+            (r for r in market_book.runners if r.selection_id == selection_id), None
+        )
 
     def check_market_book(self, market, market_book) -> bool:
         if market_book.status != "OPEN":
@@ -160,6 +189,8 @@ class BaselineFavouriteScalp(BaseStrategy):
 
         if not state.at_off_handled and seconds_to_off <= self.cancel_seconds_before_off:
             self._handle_at_off(market, market_book, state)
+        elif state.at_off_handled and not state.unhedged and state.closer_target > 0:
+            self._progress_closer(market, market_book, state)
 
     def _find_favourite(self, market_book) -> tuple | None:
         candidates = []
@@ -265,37 +296,102 @@ class BaselineFavouriteScalp(BaseStrategy):
             )
             return
 
-        favourite = next(
-            (r for r in market_book.runners if r.selection_id == state.favourite_selection_id),
-            None,
-        )
-        closing_price = self._best_back_price(favourite) if favourite else entry.average_price_matched
+        state.closer_target = shortfall
+        self._place_closer_attempt(market, market_book, state, shortfall)
 
-        trade = Trade(market.market_id, entry.selection_id, entry.handicap, self)
-        closer = trade.create_order(
+    def _closer_matched(self, state: _MarketState) -> float:
+        return round(sum(o.size_matched for o in state.closer_orders), 2)
+
+    def _place_closer_attempt(self, market, market_book, state: _MarketState, size: float) -> None:
+        attempt = len(state.closer_orders)
+        favourite = self._find_runner(market_book, state.favourite_selection_id)
+        base_price = self._best_lay_price(favourite) if favourite else None
+        if base_price is None:
+            return  # no price to work with this tick — try again next tick
+
+        # "worse" for a LAY closer means lower (more generous to the
+        # counterparty, more likely to actually match) — taking liquidity
+        # at attempt 0, walking down the ladder on each retry.
+        price = price_ticks_away(base_price, -attempt) if attempt else base_price
+
+        trade = Trade(market.market_id, state.favourite_selection_id, favourite.handicap, self)
+        order = trade.create_order(
             side="LAY",
-            order_type=LimitOrder(closing_price, shortfall),
-            notes=OrderedDict(role="closer"),
+            order_type=LimitOrder(price, size),
+            notes=OrderedDict(role="closer", attempt=attempt),
         )
-        if not place_order(market, closer, self.bus):
-            # No retry path here — _handle_at_off is a one-shot transition
-            # (at_off_handled is already True). A rejection at this point
-            # would mean the flat-at-off invariant doesn't hold; that
-            # should only happen if max_live_trade_count/max_order_exposure
-            # are set too tight for this strategy's own 2-leg pattern —
-            # which we control (see __init__) — so this is treated as an
-            # edge case worth surfacing (place_order already does, via
-            # OrderRejected + the ERROR heartbeat) rather than one worth
-            # adding retry machinery for in a deliberately dumb baseline.
-            return
-        state.closer_order = closer
+        if not place_order(market, order, self.bus):
+            return  # rejected — _progress_closer will try again next tick
+
+        state.closer_orders.append(order)
+        state.closer_placed_at_epoch = market_book.publish_time_epoch
 
         self.bus.publish(
             StrategySignal(
                 strategy=self.name,
                 market_id=market.market_id,
                 selection_id=state.favourite_selection_id,
-                reason=f"closing at market: lay {shortfall} @ {closing_price} (accept the red)",
+                reason=f"closer attempt {attempt}: lay {size} @ {price} (taking liquidity)",
                 confidence=None,
+            )
+        )
+
+    def _progress_closer(self, market, market_book, state: _MarketState) -> None:
+        remaining = round(state.closer_target - self._closer_matched(state), 2)
+        if remaining <= MIN_CLOSER_SIZE:
+            return  # fully closed — nothing more to do
+
+        current = state.closer_orders[-1] if state.closer_orders else None
+
+        if current is None:
+            # first attempt was rejected outright — retry at the same
+            # (attempt 0) price every tick until it's accepted
+            self._place_closer_attempt(market, market_book, state, remaining)
+            return
+
+        if current.status != OrderStatus.EXECUTABLE:
+            return  # already resolved (matched or cancelled) — handled elsewhere
+
+        if market_book.publish_time_epoch == state.closer_placed_at_epoch:
+            return  # give this attempt at least one tick to match
+
+        # one full tick has passed and it's still unmatched (or only
+        # partially) — recompute remaining first, a fill can land in the
+        # same instant as the tick that triggers this check
+        remaining = round(state.closer_target - self._closer_matched(state), 2)
+        if remaining <= MIN_CLOSER_SIZE:
+            return
+
+        attempt = len(state.closer_orders) - 1
+        market.cancel_order(current)
+
+        if attempt >= self.slippage_ticks:
+            self._give_up_closing(market, state, remaining)
+            return
+
+        self._place_closer_attempt(market, market_book, state, remaining)
+
+    def _give_up_closing(self, market, state: _MarketState, remaining: float) -> None:
+        state.unhedged = True
+        reason = (
+            f"closer unmatched after {self.slippage_ticks} slippage attempts — "
+            f"{remaining} left naked"
+        )
+        logger.error(
+            "Position unhedged: market=%s selection=%s remaining=%s attempts=%s",
+            market.market_id,
+            state.favourite_selection_id,
+            remaining,
+            self.slippage_ticks,
+        )
+        self.bus.publish(
+            PositionUnhedged(
+                strategy=self.name,
+                market_id=market.market_id,
+                selection_id=state.favourite_selection_id,
+                side=OrderSide.LAY,
+                remaining_size=remaining,
+                attempts=self.slippage_ticks,
+                reason=reason,
             )
         )

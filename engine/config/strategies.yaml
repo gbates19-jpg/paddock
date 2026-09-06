@@ -6,6 +6,9 @@ baseline:
   place_seconds_before_off: 300   # 5 minutes
   cancel_seconds_before_off: 30
   lay_ticks: 2
+  # How many ticks worse the T-30s closer is willing to walk the price to
+  # force a match before giving up and reporting position.unhedged.
+  slippage_ticks: 3
   # Explicit rather than defaulted — this strategy always runs two
   # concurrent legs (entry + exit) on the same runner by design, which
   # flumine's own BaseStrategy default (max_live_trade_count=1) would

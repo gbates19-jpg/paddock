@@ -130,6 +130,22 @@ class OrderRejected(BaseEvent):
     reason: str
 
 
+class PositionUnhedged(BaseEvent):
+    """A strategy gave up trying to flatten a position — walked the
+    slippage tolerance (paddock.strategies.baseline's closer retry loop)
+    and still couldn't get matched. A real, naked position is left open at
+    settlement. See paddock.strategies.baseline._give_up_closing."""
+
+    type: Literal["position.unhedged"] = "position.unhedged"
+    strategy: str
+    market_id: str
+    selection_id: int
+    side: OrderSide
+    remaining_size: float
+    attempts: int
+    reason: str
+
+
 class PnlUpdate(BaseEvent):
     type: Literal["pnl.update"] = "pnl.update"
     run_id: str
@@ -170,6 +186,7 @@ Event = (
     | StrategySignal
     | OrderEvent
     | OrderRejected
+    | PositionUnhedged
     | PnlUpdate
     | RunConfig
     | LogEvent
@@ -186,6 +203,7 @@ EVENT_TYPES: dict[str, type[BaseEvent]] = {
     "order.cancelled": OrderEvent,
     "order.lapsed": OrderEvent,
     "order.rejected": OrderRejected,
+    "position.unhedged": PositionUnhedged,
     "pnl.update": PnlUpdate,
     "run.config": RunConfig,
     "log": LogEvent,
