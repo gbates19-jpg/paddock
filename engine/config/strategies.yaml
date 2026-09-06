@@ -6,3 +6,14 @@ baseline:
   place_seconds_before_off: 300   # 5 minutes
   cancel_seconds_before_off: 30
   lay_ticks: 2
+  # Explicit rather than defaulted — this strategy always runs two
+  # concurrent legs (entry + exit) on the same runner by design, which
+  # flumine's own BaseStrategy default (max_live_trade_count=1) would
+  # silently reject as a STRATEGY_EXPOSURE violation (see
+  # BaselineFavouriteScalp.__init__ and tests/test_order_rejection.py for
+  # what that looks like when it happens).
+  max_live_trade_count: 2
+  # Bounds worst-case liability per order (LAY liability = size * (price
+  # - 1)) — comfortably covers `stake` at typical short-priced-favourite
+  # prices without being so high it'd mask a runaway price/size bug.
+  max_order_exposure: 50

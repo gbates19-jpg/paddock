@@ -48,7 +48,7 @@ class _BackFirstActiveRunner(BaseStrategy):
 
 def test_detect_data_plan_classifies_bundled_fixtures_correctly():
     assert detect_data_plan(BASIC_MARKET) == "basic"
-    assert detect_data_plan(RICH_MARKET) == "rich"
+    assert detect_data_plan(RICH_MARKET) == "pro"
 
 
 def test_ladder_refuses_to_run_against_basic_plan_data(tmp_path):

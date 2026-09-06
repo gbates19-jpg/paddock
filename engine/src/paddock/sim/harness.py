@@ -21,7 +21,7 @@ from flumine.streams.betfairhistoricalstream import BetfairHistoricalStream
 from paddock.bus.bus import EventBus
 from paddock.bus.bus import bus as default_bus
 from paddock.bus.events import RunConfig, WorkerHeartbeat, WorkerState
-from paddock.data.manifest import data_plan_for
+from paddock.data.manifest import LADDER_CAPABLE_PLANS, data_plan_for
 from paddock.sim import store
 from paddock.sim.clients import build_replay_client
 from paddock.sim.fill_models import LtpCrossMiddleware
@@ -62,10 +62,10 @@ def _validate_fill_model(
     real fill is a (recoverable) quality-of-backtest mistake, not a
     fatal one."""
     basic_files = []
-    rich_files = []
+    ladder_capable_files = []
     for f in market_files:
         plan = data_plan_for(f, data_dir)
-        (basic_files if plan == "basic" else rich_files).append(f)
+        (ladder_capable_files if plan in LADDER_CAPABLE_PLANS else basic_files).append(f)
 
     if fill_model == "ladder" and basic_files:
         names = ", ".join(f.name for f in basic_files[:5])
@@ -78,13 +78,13 @@ def _validate_fill_model(
             f"config/engine.yaml."
         )
 
-    if fill_model == "ltp_cross" and rich_files:
+    if fill_model == "ltp_cross" and ladder_capable_files:
         logger.warning(
             "fill_model=ltp_cross is being used on %d/%d market file(s) that have "
             "real order-book depth and could support fill_model=ladder instead — "
             "ltp_cross's P&L is an optimistic upper bound, ladder's is a real "
             "simulated backtest. Consider switching for these files.",
-            len(rich_files),
+            len(ladder_capable_files),
             len(market_files),
         )
 

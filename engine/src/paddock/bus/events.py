@@ -114,6 +114,22 @@ class OrderEvent(BaseEvent):
     matched_size: float = 0.0
 
 
+class OrderRejected(BaseEvent):
+    """A trading-control rejection (flumine OrderStatus.VIOLATION) — the
+    order was never live at all, so this is deliberately a separate event
+    from OrderEvent's placed/matched/cancelled/lapsed lifecycle rather than
+    a fifth literal on it. See paddock.sim.logging_control."""
+
+    type: Literal["order.rejected"] = "order.rejected"
+    order_id: str
+    market_id: str
+    selection_id: int
+    side: OrderSide
+    price: float
+    size: float
+    reason: str
+
+
 class PnlUpdate(BaseEvent):
     type: Literal["pnl.update"] = "pnl.update"
     run_id: str
@@ -153,6 +169,7 @@ Event = (
     | RunnerPrice
     | StrategySignal
     | OrderEvent
+    | OrderRejected
     | PnlUpdate
     | RunConfig
     | LogEvent
@@ -168,6 +185,7 @@ EVENT_TYPES: dict[str, type[BaseEvent]] = {
     "order.matched": OrderEvent,
     "order.cancelled": OrderEvent,
     "order.lapsed": OrderEvent,
+    "order.rejected": OrderRejected,
     "pnl.update": PnlUpdate,
     "run.config": RunConfig,
     "log": LogEvent,

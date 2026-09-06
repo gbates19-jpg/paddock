@@ -31,7 +31,9 @@ from paddock.sim.commission import compute_commission
 
 logger = logging.getLogger(__name__)
 
-COMPLETE_STATUS = {OrderStatus.EXECUTION_COMPLETE, OrderStatus.EXPIRED, OrderStatus.VIOLATION}
+# VIOLATION deliberately excluded — a rejected order never reaches
+# _process_order at all (see its docstring), so it can never land here.
+COMPLETE_STATUS = {OrderStatus.EXECUTION_COMPLETE, OrderStatus.EXPIRED}
 
 
 class _OrderProgress:
@@ -84,6 +86,18 @@ class PaddockLoggingControl(LoggingControl):
         side = OrderSide.BACK if order.side == "BACK" else OrderSide.LAY
         price = order.order_type.price
         size = order.order_type.size
+
+        # Note: a trading-control-rejected order (OrderStatus.VIOLATION)
+        # never reaches this method at all — confirmed against flumine
+        # 3.2.0 source. execution/transaction.py's Transaction.place_order
+        # returns False on ControlError *before* the order is ever added
+        # to market.blotter, and log_control(OrderEvent(...)) is only
+        # called from execution/baseexecution.py on a successful
+        # placement response. So rejections can't be caught here or via
+        # any "order-status hook" — see paddock.sim.orders.place_order,
+        # which checks Market.place_order's boolean return value at the
+        # call site instead, which is the only place this is observable.
+
         matched = order.size_matched or 0.0
         cancelled = order.size_cancelled or 0.0
         lapsed = order.size_lapsed or 0.0
