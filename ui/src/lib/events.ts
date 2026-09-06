@@ -71,6 +71,28 @@ export interface OrderEvent extends BaseEvent {
   matched_size: number;
 }
 
+export interface OrderRejected extends BaseEvent {
+  type: "order.rejected";
+  order_id: string;
+  market_id: string;
+  selection_id: number;
+  side: OrderSide;
+  price: number;
+  size: number;
+  reason: string;
+}
+
+export interface PositionUnhedged extends BaseEvent {
+  type: "position.unhedged";
+  strategy: string;
+  market_id: string;
+  selection_id: number;
+  side: OrderSide;
+  remaining_size: number;
+  attempts: number;
+  reason: string;
+}
+
 export interface PnlUpdate extends BaseEvent {
   type: "pnl.update";
   run_id: string;
@@ -104,6 +126,8 @@ export type PaddockEvent =
   | RunnerPrice
   | StrategySignal
   | OrderEvent
+  | OrderRejected
+  | PositionUnhedged
   | PnlUpdate
   | RunConfig
   | LogEvent;
@@ -113,6 +137,7 @@ export interface Snapshot {
   data: {
     workers: WorkerHeartbeat[];
     markets: MarketOpen[];
+    runner_prices: RunnerPrice[];
     pnl: PnlUpdate | null;
     run_config: RunConfig | null;
   };

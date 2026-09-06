@@ -1,14 +1,17 @@
 import { create } from "zustand";
 import type {
   MarketOpen,
+  OrderEvent,
   PaddockEvent,
   PnlUpdate,
   RunConfig,
+  RunnerPrice,
   Snapshot,
   WorkerHeartbeat,
 } from "../lib/events";
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "demo";
+export type Scene = "floor" | "paddock" | "ladder";
 
 interface Particle {
   id: string;
@@ -19,19 +22,35 @@ interface Particle {
   bornAt: number;
 }
 
+export interface SelectedRunner {
+  marketId: string;
+  selectionId: number;
+}
+
+export function runnerKey(marketId: string, selectionId: number): string {
+  return `${marketId}:${selectionId}`;
+}
+
 interface EventStoreState {
   connection: ConnectionStatus;
   workers: Record<string, WorkerHeartbeat>;
   markets: Record<string, MarketOpen>;
+  runnerPrices: Record<string, RunnerPrice>;
+  ordersByRunner: Record<string, Record<string, OrderEvent>>;
   pnl: PnlUpdate | null;
   runConfig: RunConfig | null;
   particles: Particle[];
   log: PaddockEvent[];
+  scene: Scene;
+  selectedRunner: SelectedRunner | null;
 
   setConnection: (s: ConnectionStatus) => void;
   applySnapshot: (snapshot: Snapshot) => void;
   applyEvent: (event: PaddockEvent) => void;
   pruneParticle: (id: string) => void;
+  setScene: (scene: Scene) => void;
+  selectRunner: (marketId: string, selectionId: number) => void;
+  clearSelectedRunner: () => void;
 }
 
 let particleCounter = 0;
@@ -64,12 +83,20 @@ export const useEventStore = create<EventStoreState>((set) => ({
   connection: "connecting",
   workers: {},
   markets: {},
+  runnerPrices: {},
+  ordersByRunner: {},
   pnl: null,
   runConfig: null,
   particles: [],
   log: [],
+  scene: "floor",
+  selectedRunner: null,
 
   setConnection: (connection) => set({ connection }),
+  setScene: (scene) => set({ scene }),
+  selectRunner: (marketId, selectionId) =>
+    set({ scene: "ladder", selectedRunner: { marketId, selectionId } }),
+  clearSelectedRunner: () => set({ selectedRunner: null }),
 
   applySnapshot: (snapshot) =>
     set(() => {
@@ -77,7 +104,17 @@ export const useEventStore = create<EventStoreState>((set) => ({
       for (const w of snapshot.data.workers) workers[w.name] = w;
       const markets: Record<string, MarketOpen> = {};
       for (const m of snapshot.data.markets) markets[m.market_id] = m;
-      return { workers, markets, pnl: snapshot.data.pnl, runConfig: snapshot.data.run_config };
+      const runnerPrices: Record<string, RunnerPrice> = {};
+      for (const p of snapshot.data.runner_prices ?? []) {
+        runnerPrices[runnerKey(p.market_id, p.selection_id)] = p;
+      }
+      return {
+        workers,
+        markets,
+        runnerPrices,
+        pnl: snapshot.data.pnl,
+        runConfig: snapshot.data.run_config,
+      };
     }),
 
   applyEvent: (event) =>
@@ -92,6 +129,23 @@ export const useEventStore = create<EventStoreState>((set) => ({
         const markets = { ...state.markets };
         delete markets[event.market_id];
         next.markets = markets;
+      } else if (event.type === "runner.price") {
+        next.runnerPrices = {
+          ...state.runnerPrices,
+          [runnerKey(event.market_id, event.selection_id)]: event,
+        };
+      } else if (
+        event.type === "order.placed" ||
+        event.type === "order.matched" ||
+        event.type === "order.cancelled" ||
+        event.type === "order.lapsed"
+      ) {
+        const key = runnerKey(event.market_id, event.selection_id);
+        const existing = state.ordersByRunner[key] ?? {};
+        next.ordersByRunner = {
+          ...state.ordersByRunner,
+          [key]: { ...existing, [event.order_id]: event },
+        };
       } else if (event.type === "pnl.update") {
         next.pnl = event;
       } else if (event.type === "run.config") {

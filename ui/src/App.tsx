@@ -3,6 +3,9 @@ import type { CSSProperties } from "react";
 import { useEffect } from "react";
 import { startConnection } from "./lib/connection";
 import { FloorScene } from "./scenes/FloorScene";
+import { LadderScene } from "./scenes/LadderScene";
+import { PaddockScene } from "./scenes/PaddockScene";
+import type { Scene } from "./store/eventStore";
 import { useEventStore } from "./store/eventStore";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -17,6 +20,12 @@ const STATUS_COLOR: Record<string, string> = {
   connected: "#35e07a",
   disconnected: "#ff4d6d",
   demo: "#4fd1ff",
+};
+
+const SCENE_LABEL: Record<Scene, string> = {
+  floor: "THE FLOOR",
+  paddock: "THE PADDOCK",
+  ladder: "THE LADDER",
 };
 
 const badgeStyle: CSSProperties = {
@@ -80,27 +89,56 @@ function ModeBadge() {
   );
 }
 
+function SceneTabs() {
+  const scene = useEventStore((s) => s.scene);
+  const setScene = useEventStore((s) => s.setScene);
+  const scenes: Scene[] = ["floor", "paddock", "ladder"];
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: 16,
+        left: 16,
+        display: "flex",
+        gap: 4,
+        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+        fontSize: 12,
+        letterSpacing: "0.06em",
+      }}
+    >
+      {scenes.map((s) => (
+        <button
+          key={s}
+          onClick={() => setScene(s)}
+          style={{
+            background: s === scene ? "rgba(79, 209, 255, 0.15)" : "transparent",
+            border: `1px solid ${s === scene ? "#4fd1ff" : "rgba(255,255,255,0.1)"}`,
+            color: s === scene ? "#4fd1ff" : "#7c8496",
+            borderRadius: 6,
+            padding: "5px 10px",
+            cursor: "pointer",
+          }}
+        >
+          {SCENE_LABEL[s]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function App() {
   useEffect(() => startConnection(), []);
+  const scene = useEventStore((s) => s.scene);
 
   return (
     <div style={{ position: "relative", width: "100vw", height: "100vh" }}>
-      <div
-        style={{
-          position: "absolute",
-          top: 16,
-          left: 16,
-          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-          fontSize: 13,
-          color: "#7c8496",
-          letterSpacing: "0.08em",
-        }}
-      >
-        PADDOCK — THE FLOOR
-      </div>
+      <SceneTabs />
       <ConnectionBadge />
       <ModeBadge />
-      <FloorScene />
+      {scene === "floor" && <FloorScene />}
+      {scene === "paddock" && <PaddockScene />}
+      {scene === "ladder" && <LadderScene />}
     </div>
   );
 }
