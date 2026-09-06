@@ -1,0 +1,27 @@
+:root {
+  color-scheme: dark;
+  --bg: #05070d;
+  --panel: rgba(20, 26, 41, 0.72);
+  --border: rgba(255, 255, 255, 0.08);
+  --text: #d7dce6;
+  --text-dim: #7c8496;
+  --accent: #4fd1ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  overflow: hidden;
+}

@@ -1,0 +1,26 @@
+# data (gitignored per spec — historic data files, sqlite runs.db)
+/data/**
+!/data/.gitkeep
+
+# env
+.env
+*.pem
+*.crt
+*.key
+certs/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# node / vite
+ui/node_modules/
+ui/dist/
+ui/.vite/
+
+# os
+.DS_Store

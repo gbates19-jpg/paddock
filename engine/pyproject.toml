@@ -1,0 +1,36 @@
+[project]
+name = "paddock"
+version = "0.1.0"
+description = "PADDOCK — Betfair trading engine and live visual control room (Phase 0)"
+authors = [
+    { name = "Gary Bates", email = "g.bates19@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "flumine>=3.2.0",
+    "betfairlightweight>=2.24.0",
+    "fastapi>=0.141.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.5.0",
+    "click>=8.1.0",
+    "python-dotenv>=1.0.0",
+    "pyyaml>=6.0.0",
+]
+
+[project.scripts]
+paddock = "paddock.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "httpx>=0.27.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.3,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.uv_build]
+module-root = "src"
