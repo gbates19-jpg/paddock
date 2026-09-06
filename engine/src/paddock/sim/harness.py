@@ -27,6 +27,7 @@ from paddock.sim.clients import build_replay_client
 from paddock.sim.fill_models import LtpCrossMiddleware
 from paddock.sim.logging_control import PaddockLoggingControl
 from paddock.sim.pacing import WallClockPacingMiddleware
+from paddock.sim.runner_price import DEFAULT_MAX_PER_SECOND, RunnerPriceMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,7 @@ def run_simulation(
     strategy_kwargs: dict[str, Any] | None = None,
     run_id: str | None = None,
     bus: EventBus = default_bus,
+    runner_price_rate: float = DEFAULT_MAX_PER_SECOND,
 ) -> str:
     if not market_files:
         raise FileNotFoundError("No market files provided to run_simulation")
@@ -133,6 +135,7 @@ def run_simulation(
     framework = FlumineSimulation(client=client)
     framework.add_strategy(strategy)
     framework.add_market_middleware(WallClockPacingMiddleware(speed=speed))
+    framework.add_market_middleware(RunnerPriceMiddleware(bus=bus, max_per_second=runner_price_rate))
     if fill_model == "ltp_cross":
         framework.add_market_middleware(LtpCrossMiddleware())
     framework.add_logging_control(

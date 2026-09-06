@@ -17,6 +17,7 @@ from paddock.bus.events import (
     MarketOpen,
     PnlUpdate,
     RunConfig,
+    RunnerPrice,
     WorkerHeartbeat,
 )
 
@@ -32,6 +33,7 @@ class EventBus:
         # snapshot state for new-connection catch-up
         self._workers: dict[str, WorkerHeartbeat] = {}
         self._markets: dict[str, MarketOpen] = {}
+        self._runner_prices: dict[tuple[str, int], RunnerPrice] = {}
         self._pnl: PnlUpdate | None = None
         self._run_config: RunConfig | None = None
 
@@ -54,6 +56,11 @@ class EventBus:
             self._markets[event.market_id] = event
         elif isinstance(event, MarketClose):
             self._markets.pop(event.market_id, None)
+            stale = [k for k in self._runner_prices if k[0] == event.market_id]
+            for k in stale:
+                del self._runner_prices[k]
+        elif isinstance(event, RunnerPrice):
+            self._runner_prices[(event.market_id, event.selection_id)] = event
         elif isinstance(event, PnlUpdate):
             self._pnl = event
         elif isinstance(event, RunConfig):
@@ -71,6 +78,7 @@ class EventBus:
         return {
             "workers": [w.model_dump(mode="json") for w in self._workers.values()],
             "markets": [m.model_dump(mode="json") for m in self._markets.values()],
+            "runner_prices": [p.model_dump(mode="json") for p in self._runner_prices.values()],
             "pnl": self._pnl.model_dump(mode="json") if self._pnl else None,
             "run_config": self._run_config.model_dump(mode="json") if self._run_config else None,
         }
