@@ -126,6 +126,18 @@ async function captureViewport(browser, viewport, consoleErrors, expectedFiles) 
   expectedFiles.push(`ladder-basic${suffix}.png`);
   await ladderBasicPage.close();
 
+  // --- Ladder tab tapped directly, nothing selected yet — the tab used to
+  // be disabled in this state, which just looked broken; it must now show
+  // the "pick a runner" placeholder instead of nothing ---
+  const ladderEmptyPage = await freshDemoPage("ladder-empty");
+  await ladderEmptyPage.waitForTimeout(1000);
+  await ladderEmptyPage.click("text=Ladder");
+  await ladderEmptyPage.waitForTimeout(300);
+  await ladderEmptyPage.screenshot({ path: path.join(SNAP_DIR, `ladder-empty${suffix}.png`) });
+  console.log(`Captured ladder-empty${suffix}.png`);
+  expectedFiles.push(`ladder-empty${suffix}.png`);
+  await ladderEmptyPage.close();
+
   await context.close();
 }
 

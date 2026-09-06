@@ -19,8 +19,12 @@ const SCREEN_ORDER: Screen[] = ["pipeline", "race", "ladder"];
 function NavTabs() {
   const screen = useEventStore((s) => s.screen);
   const setScreen = useEventStore((s) => s.setScreen);
-  const selected = useEventStore((s) => s.selectedRunner);
 
+  // Every tab is always reachable — Ladder used to be disabled until a
+  // runner was picked on the Race card, which just looked broken (a greyed
+  // tab with no explanation). It now always opens; LadderScreen itself
+  // shows a "pick a runner on the race card" placeholder when nothing's
+  // selected, which actually tells you what to do.
   return (
     <nav
       style={{
@@ -32,11 +36,9 @@ function NavTabs() {
     >
       {SCREEN_ORDER.map((s) => {
         const active = s === screen;
-        const disabled = s === "ladder" && !selected;
         return (
           <button
             key={s}
-            disabled={disabled}
             onClick={() => setScreen(s)}
             style={{
               fontFamily: fonts.sans,
@@ -47,9 +49,8 @@ function NavTabs() {
               borderRadius: 8,
               border: "none",
               background: active ? colors.panel2 : "transparent",
-              color: disabled ? colors.textFaint : active ? colors.text : colors.textDim,
-              cursor: disabled ? "default" : "pointer",
-              opacity: disabled ? 0.5 : 1,
+              color: active ? colors.text : colors.textDim,
+              cursor: "pointer",
             }}
           >
             {SCREEN_LABEL[s]}
