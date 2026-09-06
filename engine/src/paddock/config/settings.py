@@ -9,6 +9,7 @@ sign-off from Gary.
 from __future__ import annotations
 
 from enum import Enum
+from pathlib import Path
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -18,6 +19,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 LIVE_ENABLED = False
 
 LIVE_ACK_PHRASE = "I_UNDERSTAND_REAL_MONEY"
+
+# engine/src/paddock/config/settings.py -> parents[3] == engine/ -> ../data
+# == repo-root /data. In docker-compose this is bind-mounted to /data
+# instead (PADDOCK_DATA_DIR=/data in engine/.env.example's docker profile)
+# — this default only matters for local (non-docker) dev.
+_DEFAULT_DATA_DIR = str(Path(__file__).resolve().parents[3].parent / "data")
 
 
 class PaddockMode(str, Enum):
@@ -45,7 +52,7 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
 
-    data_dir: str = "/data"
+    data_dir: str = _DEFAULT_DATA_DIR
 
     @model_validator(mode="after")
     def _guard_live_mode(self) -> "Settings":

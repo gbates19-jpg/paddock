@@ -1,0 +1,7 @@
+# Engine-wide settings. Loaded by paddock.config.engine_config.load_engine_config.
+#
+# commission_rate is Gary's actual Betfair account rate — do NOT use the
+# platform default of 5%. This value is passed as `commission_base` into
+# every SimulatedClient/BetfairClient flumine constructs, so flumine's own
+# Market.cleared() computes commission the same way our pnl worker does.
+commission_rate: 0.02

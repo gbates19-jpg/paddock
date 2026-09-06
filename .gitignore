@@ -2,6 +2,11 @@
 /data/**
 !/data/.gitkeep
 
+# historic data archives, wherever they land (e.g. a manual download
+# dropped in /docs before being moved into /data/raw)
+*.tar
+*.bz2
+
 # env
 .env
 *.pem
