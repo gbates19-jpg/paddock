@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS run_orders (
     matched_size REAL,
     status TEXT,
     profit REAL,
+    role TEXT,
+    attempt INTEGER,
     PRIMARY KEY (run_id, order_id)
 );
 """
@@ -115,12 +117,14 @@ def record_order(
     matched_size: float,
     status: str,
     profit: float,
+    role: str | None = None,
+    attempt: int | None = None,
 ) -> None:
     con.execute(
         "INSERT OR REPLACE INTO run_orders "
-        "(run_id, order_id, market_id, selection_id, side, price, size, matched_size, status, profit) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (run_id, order_id, market_id, selection_id, side, price, size, matched_size, status, profit),
+        "(run_id, order_id, market_id, selection_id, side, price, size, matched_size, status, profit, role, attempt) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (run_id, order_id, market_id, selection_id, side, price, size, matched_size, status, profit, role, attempt),
     )
 
 

@@ -189,4 +189,6 @@ def _record_final_orders(framework: FlumineSimulation, run_id: str, data_dir: Pa
                     order.size_matched or 0.0,
                     order.status.value if order.status else "unknown",
                     order.profit,
+                    role=order.notes.get("role") if order.notes else None,
+                    attempt=order.notes.get("attempt") if order.notes else None,
                 )

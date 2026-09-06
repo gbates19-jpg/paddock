@@ -293,8 +293,11 @@ def sim_run(
             ).fetchall()
             click.echo(f"\nOrders ({len(orders)}):")
             for o in orders:
+                role = o["role"] or "?"
+                if o["attempt"] is not None:
+                    role = f"{role}[{o['attempt']}]"
                 click.echo(
-                    f"  {o['market_id']} {o['side']:4s} {o['price']:>6} matched={o['matched_size']:>5}/{o['size']:<5} "
+                    f"  {o['market_id']} {role:12s} {o['side']:4s} {o['price']:>6} matched={o['matched_size']:>5}/{o['size']:<5} "
                     f"status={o['status']:<18} profit={o['profit']}"
                 )
 
