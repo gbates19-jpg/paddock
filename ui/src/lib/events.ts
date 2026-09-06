@@ -111,6 +111,10 @@ export interface RunConfig extends BaseEvent {
   mode: string;
   fill_model: string;
   commission_rate: number;
+  // The value at run start — POST /sim/speed can change it live
+  // afterwards; the Book HUD's slider tracks its own optimistic local
+  // state rather than re-reading this.
+  speed: number;
 }
 
 export interface LogEvent extends BaseEvent {

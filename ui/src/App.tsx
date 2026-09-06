@@ -28,9 +28,18 @@ const SCENE_LABEL: Record<Scene, string> = {
   ladder: "THE LADDER",
 };
 
+// Note: NOT position:absolute-relative-to-viewport — that was a real bug.
+// Scenes (Paddock, Ladder) have their own content starting at the top of
+// their container, and either painted over these badges (Paddock's root
+// div is position:relative, which — per CSS stacking rules — promotes it
+// into the same "positioned, z-index:auto" bucket as these badges, and
+// being later in the DOM it then paints on top of them) or visually
+// collided with them (Ladder's own header row, with no reserved
+// clearance). Found both via the very first real screenshots this UI
+// ever got (scripts/snap.mjs) — never caught without actually rendering
+// it. Fixed by making the header a real flex row that scenes render
+// below, not a floating overlay on top of whatever a scene draws.
 const badgeStyle: CSSProperties = {
-  position: "absolute",
-  right: 16,
   padding: "6px 12px",
   borderRadius: 999,
   background: "rgba(20, 26, 41, 0.72)",
@@ -39,6 +48,7 @@ const badgeStyle: CSSProperties = {
   fontSize: 12,
   letterSpacing: "0.08em",
   fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+  whiteSpace: "nowrap",
 };
 
 function ConnectionBadge() {
@@ -51,7 +61,7 @@ function ConnectionBadge() {
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -6 }}
         transition={{ duration: 0.2 }}
-        style={{ ...badgeStyle, top: 16, color: STATUS_COLOR[connection] }}
+        style={{ ...badgeStyle, color: STATUS_COLOR[connection] }}
       >
         ● {STATUS_LABEL[connection]}
       </motion.div>
@@ -80,7 +90,6 @@ function ModeBadge() {
       }
       style={{
         ...badgeStyle,
-        top: 52,
         color: isOptimistic ? "#ffb84f" : "#7c8496",
       }}
     >
@@ -97,9 +106,6 @@ function SceneTabs() {
   return (
     <div
       style={{
-        position: "absolute",
-        top: 16,
-        left: 16,
         display: "flex",
         gap: 4,
         fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
@@ -127,18 +133,49 @@ function SceneTabs() {
   );
 }
 
+function Header() {
+  return (
+    <div
+      style={{
+        position: "relative",
+        zIndex: 10,
+        flexShrink: 0,
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "flex-start",
+        padding: 16,
+        gap: 12,
+      }}
+    >
+      <SceneTabs />
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
+        <ConnectionBadge />
+        <ModeBadge />
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   useEffect(() => startConnection(), []);
   const scene = useEventStore((s) => s.scene);
 
   return (
-    <div style={{ position: "relative", width: "100vw", height: "100vh" }}>
-      <SceneTabs />
-      <ConnectionBadge />
-      <ModeBadge />
-      {scene === "floor" && <FloorScene />}
-      {scene === "paddock" && <PaddockScene />}
-      {scene === "ladder" && <LadderScene />}
+    <div
+      style={{
+        width: "100vw",
+        height: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        background: "#05070d",
+      }}
+    >
+      <Header />
+      <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
+        {scene === "floor" && <FloorScene />}
+        {scene === "paddock" && <PaddockScene />}
+        {scene === "ladder" && <LadderScene />}
+      </div>
     </div>
   );
 }

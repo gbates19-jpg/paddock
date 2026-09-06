@@ -1,8 +1,11 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { runnerKey, useEventStore } from "../store/eventStore";
 import type { OrderEvent, PriceLevel } from "../lib/events";
+import { ticksBetween } from "../lib/ticks";
+import { colors, colorsCss, fonts } from "../theme";
 
 const DEPTH_ROWS = 3;
+const LADDER_WINDOW = 10;
 
 function maxSize(levels: PriceLevel[]): number {
   return Math.max(1, ...levels.map((l) => l.size));
@@ -13,10 +16,12 @@ function OrderChip({ order }: { order: OrderEvent }) {
   const complete = order.matched_size >= order.size;
   return (
     <motion.div
+      key={complete ? `${order.order_id}-matched` : order.order_id}
       layout
-      initial={{ opacity: 0, scale: 0.6 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.4 }}
+      initial={{ opacity: 0, scale: 0.4, y: isBack ? 6 : -6 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.3 }}
+      transition={{ type: "spring", stiffness: 420, damping: 24 }}
       style={{
         display: "inline-flex",
         alignItems: "center",
@@ -24,10 +29,10 @@ function OrderChip({ order }: { order: OrderEvent }) {
         padding: "2px 8px",
         borderRadius: 999,
         fontSize: 11,
-        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+        fontFamily: fonts.mono,
         background: isBack ? "rgba(79, 209, 255, 0.18)" : "rgba(255, 138, 92, 0.18)",
-        border: `1px solid ${isBack ? "#4fd1ff" : "#ff8a5c"}`,
-        color: isBack ? "#4fd1ff" : "#ff8a5c",
+        border: `1px solid ${isBack ? colorsCss.back : colorsCss.lay}`,
+        color: isBack ? colorsCss.back : colorsCss.lay,
       }}
     >
       {order.side.toUpperCase()} {order.price} · {order.matched_size}/{order.size}
@@ -43,6 +48,7 @@ function LadderRow({
   maxBackSize,
   maxLaySize,
   ordersAtPrice,
+  isSpread,
 }: {
   price: number;
   backSize: number;
@@ -50,9 +56,18 @@ function LadderRow({
   maxBackSize: number;
   maxLaySize: number;
   ordersAtPrice: OrderEvent[];
+  isSpread: boolean;
 }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 90px 1fr", alignItems: "center", height: 30 }}>
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "1fr 90px 1fr",
+        alignItems: "center",
+        height: 30,
+        background: isSpread ? "rgba(255,255,255,0.02)" : "transparent",
+      }}
+    >
       <div style={{ display: "flex", justifyContent: "flex-end" }}>
         {backSize > 0 && (
           <motion.div
@@ -68,7 +83,7 @@ function LadderRow({
               paddingRight: 6,
               fontSize: 11,
               color: "#cdeeff",
-              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+              fontFamily: fonts.mono,
               minWidth: 2,
             }}
           >
@@ -79,10 +94,10 @@ function LadderRow({
       <div
         style={{
           textAlign: "center",
-          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+          fontFamily: fonts.mono,
           fontSize: 13,
           fontWeight: 600,
-          color: "#e4e8f0",
+          color: backSize > 0 || laySize > 0 ? colors.text : colors.textFaint,
         }}
       >
         {price.toFixed(2)}
@@ -101,7 +116,7 @@ function LadderRow({
               paddingLeft: 6,
               fontSize: 11,
               color: "#ffd9c4",
-              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+              fontFamily: fonts.mono,
               minWidth: 2,
             }}
           >
@@ -150,19 +165,24 @@ export function LadderScene() {
   return (
     <div style={{ width: "100%", height: "100%", padding: "24px 32px", overflow: "auto" }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 16 }}>
-        <div style={{ fontFamily: "ui-sans-serif, system-ui, sans-serif", fontSize: 16, fontWeight: 600, color: "#e4e8f0" }}>
+        <div style={{ fontFamily: fonts.sans, fontSize: 16, fontWeight: 600, color: colors.text }}>
           {runner?.name ?? `#${selected.selectionId}`}
         </div>
-        <div style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 12, color: "#7c8496" }}>
+        <div style={{ fontFamily: fonts.mono, fontSize: 12, color: colors.textDim }}>
           {market?.venue} {market?.race_name}
         </div>
+        {rp?.traded_volume != null && (
+          <div style={{ fontFamily: fonts.mono, fontSize: 12, color: colors.textDim }}>
+            vol {rp.traded_volume.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+          </div>
+        )}
         <button
           onClick={clear}
           style={{
             marginLeft: "auto",
             background: "transparent",
             border: "1px solid rgba(255,255,255,0.15)",
-            color: "#aab4c8",
+            color: colors.textDim,
             borderRadius: 6,
             padding: "4px 10px",
             fontSize: 12,
@@ -217,17 +237,32 @@ export function LadderScene() {
           )}
           <div style={{ position: "relative" }}>
             {(() => {
-              const maxBack = maxSize(rp.back.slice(0, DEPTH_ROWS));
-              const maxLay = maxSize(rp.lay.slice(0, DEPTH_ROWS));
-              const prices = new Set<number>();
-              rp.back.slice(0, DEPTH_ROWS).forEach((l) => prices.add(l.price));
-              rp.lay.slice(0, DEPTH_ROWS).forEach((l) => prices.add(l.price));
+              const observedBack = rp.back.slice(0, DEPTH_ROWS);
+              const observedLay = rp.lay.slice(0, DEPTH_ROWS);
+              const maxBack = maxSize(observedBack);
+              const maxLay = maxSize(observedLay);
+              const bestBack = observedBack[0]?.price;
+              const bestLay = observedLay[0]?.price;
+
+              // fill the gap between best-lay and best-back (and a little
+              // beyond) with real ladder ticks, not just the sparse levels
+              // the feed happened to report — this is what makes it read
+              // as a ladder instead of a couple of floating bars.
+              const hi = Math.max(bestLay ?? 0, bestBack ?? 0, ...orders.map((o) => o.price));
+              const lo = Math.min(bestLay ?? hi, bestBack ?? hi, ...orders.map((o) => o.price));
+              const tickRows = hi > 0 ? ticksBetween(lo, hi, LADDER_WINDOW) : [];
+
+              const prices = new Set<number>(tickRows);
+              observedBack.forEach((l) => prices.add(l.price));
+              observedLay.forEach((l) => prices.add(l.price));
               orders.forEach((o) => prices.add(o.price));
               const sortedPrices = Array.from(prices).sort((a, b) => b - a);
+
               return sortedPrices.map((price) => {
-                const back = rp.back.find((l) => l.price === price);
-                const lay = rp.lay.find((l) => l.price === price);
+                const back = observedBack.find((l) => l.price === price);
+                const lay = observedLay.find((l) => l.price === price);
                 const ordersAtPrice = orders.filter((o) => o.price === price);
+                const isSpread = bestBack != null && bestLay != null && price < bestLay && price > bestBack;
                 return (
                   <LadderRow
                     key={price}
@@ -237,13 +272,14 @@ export function LadderScene() {
                     maxBackSize={maxBack}
                     maxLaySize={maxLay}
                     ordersAtPrice={ordersAtPrice}
+                    isSpread={isSpread}
                   />
                 );
               });
             })()}
           </div>
-          <div style={{ marginTop: 12, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 12, color: "#7c8496" }}>
-            ltp {rp.ltp ?? "—"} {isGreen && <span style={{ color: "#35e07a" }}>· hedged flat</span>}
+          <div style={{ marginTop: 12, fontFamily: fonts.mono, fontSize: 12, color: colors.textDim }}>
+            ltp {rp.ltp ?? "—"} {isGreen && <span style={{ color: colorsCss.pnlPos }}>· hedged flat</span>}
           </div>
         </div>
       )}
@@ -260,8 +296,8 @@ function Placeholder({ text }: { text: string }) {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        color: "#7c8496",
-        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+        color: colors.textDim,
+        fontFamily: fonts.mono,
         fontSize: 13,
       }}
     >
