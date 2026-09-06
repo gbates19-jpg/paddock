@@ -2,6 +2,11 @@
 /data/**
 !/data/.gitkeep
 
+# runs.db should only ever exist under /data (see paddock.config.settings'
+# _DEFAULT_DATA_DIR) — this catches a stray one anywhere else too, e.g.
+# from a one-off command run with cwd=engine/.
+runs.db
+
 # historic data archives, wherever they land (e.g. a manual download
 # dropped in /docs before being moved into /data/raw)
 *.tar

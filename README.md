@@ -217,8 +217,55 @@ strategy should call through it rather than `market.place_order` directly.
 Results land in `<PADDOCK_DATA_DIR>/runs.db`, readable via the API's
 `/runs` endpoints.
 
-## Docker
+## Docker (step 5)
 
-Not written yet (step 5). When it lands: **UNTESTED** — this Mac doesn't
-have Docker installed. Consider OrbStack (lighter-weight Docker Desktop
-alternative for macOS) over Docker Desktop when you get to it.
+**UNTESTED** — this Mac doesn't have Docker installed, so `docker-compose.yml`
+and both Dockerfiles have never actually been built or run; only their
+shape is checked, in `engine/tests/test_docker_compose.py`. Consider
+OrbStack (lighter-weight Docker Desktop alternative for macOS) over Docker
+Desktop when you get to it. Review both Dockerfiles the first time this
+actually runs.
+
+```
+cp engine/.env.example engine/.env   # fill in, same as bare-metal
+cp ui/.env.example ui/.env
+docker compose up --build
+```
+
+Engine's REST/websocket API lands on `:8000`, the UI dev server on
+`:5173` — same ports as running each half directly. `./data` is
+bind-mounted into the engine container at `/data`
+(`PADDOCK_DATA_DIR=/data`, set in `docker-compose.yml` — see
+`paddock.config.settings._DEFAULT_DATA_DIR`'s docstring for why that
+differs from the bare-metal default).
+
+### Reaching it over Tailscale (e.g. from a phone)
+
+This machine's real, confirmed Tailscale identity today:
+
+```
+Tailscale hostname:  mac-mini-slave.tail94ff73.ts.net
+Tailscale IPv4:      100.123.194.76
+```
+
+Browse to `http://mac-mini-slave.tail94ff73.ts.net:5173/` (or the bare IP)
+from any device on the same tailnet — no port-forwarding, no exposure
+beyond the tailnet. Two gotchas, both because the UI is a dev server, not
+a static build — its JS embeds config at server-start time, not per
+request:
+
+- **`ui/.env`'s `VITE_API_WS_URL`** must point at the Tailscale hostname
+  (`ws://mac-mini-slave.tail94ff73.ts.net:8000/events`), not
+  `localhost` — every client that loads the page gets the same baked-in
+  value, and `localhost:8000` on a phone means the phone itself, not this
+  Mac.
+- **`engine/.env`'s `PADDOCK_API_CORS_ORIGIN`** must then match wherever
+  the UI is actually being served from
+  (`http://mac-mini-slave.tail94ff73.ts.net:5173`) or the engine's REST
+  endpoints (e.g. the speed slider's `POST /sim/speed`) get CORS-rejected
+  — only the websocket is origin-agnostic.
+
+`npm run dev -- --open '/?demo=1'` (see UI section above) sidesteps both
+of these entirely — no engine, no websocket, no CORS — useful for
+checking the control room renders correctly over Tailscale before
+worrying about a live connection at all.

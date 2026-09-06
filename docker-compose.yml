@@ -1,0 +1,39 @@
+# UNTESTED — written without a local Docker install (see README.md "Docker"
+# section and docs/phase1.md). Review the first time this actually builds.
+#
+# Prerequisite: `cp engine/.env.example engine/.env` and
+# `cp ui/.env.example ui/.env`, then fill both in — same env files
+# `uv run` / `npm run dev` use on bare metal, see README.md.
+#
+# Reachable over Tailscale from a phone/other device: browse to
+# http://<this-machine's-tailscale-hostname>:5173/ — but the UI embeds
+# VITE_API_WS_URL into its JS at dev-server start, so ui/.env's
+# VITE_API_WS_URL must point at the Tailscale hostname too (not
+# localhost), and engine/.env's PADDOCK_API_CORS_ORIGIN must match the
+# Tailscale origin the UI is actually served from, or the REST calls
+# (e.g. the speed slider's POST /sim/speed) get CORS-rejected. See
+# README.md for this machine's real values.
+services:
+  engine:
+    build: ./engine
+    env_file:
+      - ./engine/.env
+    environment:
+      # Local (non-docker) dev defaults to <repo_root>/data instead — see
+      # paddock.config.settings._DEFAULT_DATA_DIR.
+      PADDOCK_DATA_DIR: /data
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+
+  ui:
+    build: ./ui
+    env_file:
+      - ./ui/.env
+    ports:
+      - "5173:5173"
+    depends_on:
+      - engine
+    restart: unless-stopped
