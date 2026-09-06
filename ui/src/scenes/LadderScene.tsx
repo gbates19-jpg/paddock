@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { runnerKey, useEventStore } from "../store/eventStore";
 import type { OrderEvent, PriceLevel } from "../lib/events";
-import { ticksBetween, tickDown, tickUp } from "../lib/ticks";
+import { snapToTick, ticksBetween, tickDown, tickUp } from "../lib/ticks";
 import { colors, colorsCss, fonts } from "../theme";
 
 const DEPTH_ROWS = 3;
@@ -259,7 +259,14 @@ export function LadderScene() {
               // like a real ladder — it is NOT pulled in to stretch the window,
               // which is what made the old ladder jump about.
               const touchMid = bestBack != null && bestLay != null ? (bestBack + bestLay) / 2 : bestBack ?? bestLay ?? null;
-              const centre = rp.ltp ?? touchMid ?? orders[0]?.price ?? 0;
+              // Stale-LTP guard: in a thin pre-off market the last trade can
+              // be many ticks from where the book now sits. Centring on it
+              // would push every real level off-screen, so if LTP is outside
+              // the window around the touch, centre on the touch instead.
+              const ltpFarFromTouch =
+                rp.ltp != null && touchMid != null && ticksBetween(Math.min(rp.ltp, touchMid), Math.max(rp.ltp, touchMid), HALF_WINDOW + 1).length > HALF_WINDOW - 1;
+              const rawCentre = (ltpFarFromTouch ? touchMid : rp.ltp) ?? touchMid ?? orders[0]?.price ?? 0;
+              const centre = rawCentre > 0 ? snapToTick(rawCentre) : 0;
               let hi = centre;
               let lo = centre;
               for (let i = 0; i < HALF_WINDOW; i++) {

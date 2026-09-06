@@ -42,3 +42,14 @@ export function ticksBetween(low: number, high: number, maxRows = 12): number[] 
   }
   return rows;
 }
+
+// Nearest valid Betfair tick. Feeds can carry off-grid prices (the demo's
+// random walk does; a real feed shouldn't) — the ladder centres on the
+// snapped price so its rows are always real ticks, and off-grid observed
+// levels are inserted as extra rows rather than shifting the whole grid.
+export function snapToTick(price: number): number {
+  const p = Math.max(1.01, price);
+  const band = BANDS.find(([lo, hi]) => p >= lo && p < hi) ?? BANDS[BANDS.length - 1];
+  const [lo, , size] = band;
+  return Number((lo + Math.round((p - lo) / size) * size).toFixed(2));
+}

@@ -246,9 +246,31 @@ function SpeedControl() {
           );
         })}
       </div>
-      {!SPEED_PRESETS.some((p) => p.value === value) && (
-        <span style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.textDim }}>{value}x</span>
-      )}
+      {/* Free entry as well as presets: Pro-plan replays need ~5000x to be
+          watchable (16k updates/market), which no sane preset list covers. */}
+      <input
+        type="number"
+        min={0}
+        step={1}
+        value={value}
+        disabled={disabled}
+        onChange={(e) => setValue(Number(e.target.value))}
+        onBlur={(e) => commit(Math.max(0, Number(e.target.value) || 0))}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        }}
+        title="custom speed (market-seconds per real-second; 0 = max)"
+        style={{
+          width: 58,
+          fontFamily: fonts.mono,
+          fontSize: 11,
+          padding: "2px 4px",
+          borderRadius: 5,
+          background: "rgba(255,255,255,0.04)",
+          border: "1px solid rgba(255,255,255,0.1)",
+          color: colors.text,
+        }}
+      />
     </div>
   );
 }
