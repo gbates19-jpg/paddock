@@ -26,6 +26,19 @@ export function buildDemoStream(): Recorded[] {
   for (const w of WORKERS) events.push(heartbeat(0, w, "idle"));
 
   events.push({
+    offsetMs: 0,
+    event: {
+      type: "run.config",
+      event_id: eid(),
+      ts_ms: 0,
+      run_id: "demo-run",
+      mode: "replay",
+      fill_model: "ltp_cross",
+      commission_rate: 0.02,
+    },
+  });
+
+  events.push({
     offsetMs: 500,
     event: {
       type: "market.open",
@@ -128,6 +141,7 @@ export function buildDemoStream(): Recorded[] {
       market_pnl: 3.4,
       run_pnl: 3.4,
       commission: 0.07,
+      fill_model: "ltp_cross",
     },
   });
 

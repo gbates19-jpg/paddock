@@ -1,15 +1,14 @@
-"""Name -> strategy class lookup for the `paddock sim run --strategy` CLI flag.
-
-`baseline` (BaselineFavouriteScalp) lands in step 3.
-"""
+"""Name -> strategy class lookup for the `paddock sim run --strategy` CLI flag."""
 from __future__ import annotations
 
 from flumine.strategy.strategy import BaseStrategy
 
+from paddock.strategies.baseline import BaselineFavouriteScalp
 from paddock.strategies.passive import PassiveObserver
 
 REGISTRY: dict[str, type[BaseStrategy]] = {
     "passive": PassiveObserver,
+    "baseline": BaselineFavouriteScalp,
 }
 
 

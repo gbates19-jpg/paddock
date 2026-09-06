@@ -42,31 +42,55 @@ Unpacks into `<dest>/<year>/<month>/<market_id>` and prints a summary
 against a real account** — see the docstring in
 `engine/src/paddock/data/historic.py`.
 
-**Known limitation, confirmed against a real Basic Plan download:** Basic
-Plan historic files carry `ltp` (last traded price) only — no `atb`/`atl`
-(order-book depth) and no `trd` (traded-volume ladder). flumine's simulated
-order matching is driven entirely by the traded-volume ladder, so a limit
-order backtest against Basic Plan data always settles with
-`size_matched == 0`, regardless of price. This doesn't break the pipeline
-(the smoke test uses a real Basic Plan file and never places an order), but
-it means **step 3's BaselineFavouriteScalp cannot get a meaningful
-simulated fill against free data as currently planned** — needs a decision
-before that strategy is designed: either backtest against a paid plan with
-order-book depth, or adopt an explicit fill-assumption for Basic Plan data
-(e.g. "a limit order at or through `ltp` is assumed filled") documented as
-a Phase 0 simplification.
+**Data plan matters for matching, confirmed against a real Basic Plan
+download:** Basic Plan historic files carry `ltp` only — no `atb`/`atl`
+(order-book depth) and no `trd` (traded-volume ladder), which flumine's
+native simulated matching requires (a limit order backtest against Basic
+Plan data otherwise always settles `size_matched == 0`, regardless of
+price). `paddock data unpack` auto-detects this per market file (byte-scan
+for `atb`/`atl`/`trd`) and records it in `<dest>/manifest.jsonl`. See
+**Fill models** below for how `sim run` handles it.
+
+## Fill models (decision, step 2.5)
+
+`config/engine.yaml`'s `fill_model` picks how orders get simulated fills:
+
+- **`ladder`** (default) — flumine's native order-book-depth + traded-volume
+  matching. Needs Advanced/Pro plan data or a live stream. `sim run`
+  **refuses to run** (clear error naming the files) if any loaded market
+  file is Basic Plan data — see `paddock.sim.harness._validate_fill_model`.
+- **`ltp_cross`** — optimistic approximation for Basic Plan data: a limit
+  order is assumed fully matched at its own price on the first tick `ltp`
+  crosses it (BACK: `ltp >= price`; LAY: `ltp <= price`). No partial fills,
+  no queue position. Implemented as a `SimulatedOrder`/`SimulatedMiddleware`
+  subclass (`paddock.sim.fill_models`) — not a flumine patch. **P&L under
+  this model is an optimistic upper bound, not a backtest result** — every
+  `runs.db` row, every `pnl.update` bus event, and the UI's mode badge
+  carry `fill_model` so this is never silently conflated with a real
+  result (the badge reads e.g. `REPLAY · ltp_cross (optimistic)`).
+
+`sim run --fill-model` overrides the config default per run. Using
+`ltp_cross` on data that actually supports `ladder` isn't fatal, just
+logged as a loud warning (you're leaving a real backtest on the table).
 
 ## Sim (step 2)
 
 ```
 cd engine
-uv run paddock sim run --strategy passive --data ../data/2026/09 --speed 20
+uv run paddock sim run --strategy baseline --data ../data/2026/09 --speed 20 --fill-model ltp_cross
 ```
 
 `--speed` is market-seconds per real-second (0 = as fast as possible).
 `passive` is a diagnostic strategy that places no orders — useful for
-validating the pipeline before step 3's real strategy exists. Results land
-in `<PADDOCK_DATA_DIR>/runs.db`, readable via the API's `/runs` endpoints.
+validating the pipeline before a real strategy exists. `baseline`
+(`BaselineFavouriteScalp`, step 3) is deliberately dumb: backs the
+favourite ~5 minutes before off, lays 2 ticks lower, cancels whatever's
+unmatched 30s before off. Its price-reading is fill-model-agnostic (reads
+the order-book ladder when present, falls back to `ltp` when it's empty) —
+it's the *engine*, not the strategy, that enforces which fill_model a given
+run is allowed to use. Params live in `config/strategies.yaml`. Results
+land in `<PADDOCK_DATA_DIR>/runs.db`, readable via the API's `/runs`
+endpoints.
 
 ## Docker
 

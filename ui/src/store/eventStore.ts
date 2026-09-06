@@ -3,6 +3,7 @@ import type {
   MarketOpen,
   PaddockEvent,
   PnlUpdate,
+  RunConfig,
   Snapshot,
   WorkerHeartbeat,
 } from "../lib/events";
@@ -23,6 +24,7 @@ interface EventStoreState {
   workers: Record<string, WorkerHeartbeat>;
   markets: Record<string, MarketOpen>;
   pnl: PnlUpdate | null;
+  runConfig: RunConfig | null;
   particles: Particle[];
   log: PaddockEvent[];
 
@@ -63,6 +65,7 @@ export const useEventStore = create<EventStoreState>((set) => ({
   workers: {},
   markets: {},
   pnl: null,
+  runConfig: null,
   particles: [],
   log: [],
 
@@ -74,7 +77,7 @@ export const useEventStore = create<EventStoreState>((set) => ({
       for (const w of snapshot.data.workers) workers[w.name] = w;
       const markets: Record<string, MarketOpen> = {};
       for (const m of snapshot.data.markets) markets[m.market_id] = m;
-      return { workers, markets, pnl: snapshot.data.pnl };
+      return { workers, markets, pnl: snapshot.data.pnl, runConfig: snapshot.data.run_config };
     }),
 
   applyEvent: (event) =>
@@ -91,6 +94,8 @@ export const useEventStore = create<EventStoreState>((set) => ({
         next.markets = markets;
       } else if (event.type === "pnl.update") {
         next.pnl = event;
+      } else if (event.type === "run.config") {
+        next.runConfig = event;
       }
 
       const particle = particleFor(event);

@@ -121,6 +121,23 @@ class PnlUpdate(BaseEvent):
     market_pnl: float | None = None
     run_pnl: float = 0.0
     commission: float = 0.0
+    # Required, no default: P&L is only meaningful alongside how it was
+    # produced — "ltp_cross" numbers are an optimistic upper bound, not a
+    # backtest result. See paddock.sim.fill_models.
+    fill_model: str
+
+
+class RunConfig(BaseEvent):
+    """Announced once when a sim run starts (and carried in the bus
+    snapshot) so a UI that connects mid-run — or a phone joining late over
+    Tailscale — knows the mode badge state without waiting for a
+    pnl.update. See paddock.sim.harness.run_simulation."""
+
+    type: Literal["run.config"] = "run.config"
+    run_id: str
+    mode: str
+    fill_model: str
+    commission_rate: float
 
 
 class LogEvent(BaseEvent):
@@ -137,6 +154,7 @@ Event = (
     | StrategySignal
     | OrderEvent
     | PnlUpdate
+    | RunConfig
     | LogEvent
 )
 
@@ -151,6 +169,7 @@ EVENT_TYPES: dict[str, type[BaseEvent]] = {
     "order.cancelled": OrderEvent,
     "order.lapsed": OrderEvent,
     "pnl.update": PnlUpdate,
+    "run.config": RunConfig,
     "log": LogEvent,
 }
 

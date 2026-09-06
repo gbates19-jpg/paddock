@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS runs (
     strategy TEXT NOT NULL,
     params TEXT,
     commission_rate REAL NOT NULL,
+    fill_model TEXT NOT NULL,
     run_pnl REAL NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
@@ -72,11 +73,19 @@ def connect(data_dir: Path):
         con.close()
 
 
-def create_run(con: sqlite3.Connection, run_id: str, strategy: str, params: dict, commission_rate: float, created_at: str) -> None:
+def create_run(
+    con: sqlite3.Connection,
+    run_id: str,
+    strategy: str,
+    params: dict,
+    commission_rate: float,
+    fill_model: str,
+    created_at: str,
+) -> None:
     con.execute(
-        "INSERT INTO runs (run_id, strategy, params, commission_rate, run_pnl, created_at) "
-        "VALUES (?, ?, ?, ?, 0, ?)",
-        (run_id, strategy, json.dumps(params), commission_rate, created_at),
+        "INSERT INTO runs (run_id, strategy, params, commission_rate, fill_model, run_pnl, created_at) "
+        "VALUES (?, ?, ?, ?, ?, 0, ?)",
+        (run_id, strategy, json.dumps(params), commission_rate, fill_model, created_at),
     )
 
 

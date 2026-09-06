@@ -1,0 +1,8 @@
+# Per-strategy parameters, keyed by the name registered in
+# paddock.strategies.registry. Loaded by paddock.config.strategies_config.
+
+baseline:
+  stake: 2.0
+  place_seconds_before_off: 300   # 5 minutes
+  cancel_seconds_before_off: 30
+  lay_ticks: 2

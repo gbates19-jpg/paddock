@@ -51,7 +51,7 @@ def create_app() -> FastAPI:
         with sqlite3.connect(db_path) as con:
             con.row_factory = sqlite3.Row
             rows = con.execute(
-                "SELECT run_id, strategy, params, commission_rate, created_at "
+                "SELECT run_id, strategy, params, commission_rate, fill_model, created_at "
                 "FROM runs ORDER BY created_at DESC"
             ).fetchall()
             return [dict(r) for r in rows]

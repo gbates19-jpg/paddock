@@ -38,6 +38,49 @@ def api(host: str | None, port: int | None, reload: bool) -> None:
 
 
 @main.group()
+def auth() -> None:
+    """Account/auth diagnostics — read-only, never prints secrets."""
+
+
+@auth.command("check")
+def auth_check() -> None:
+    """Log in (cert if configured, else interactive), print account status
+    + balance, and confirm the configured app key is DELAYED not LIVE."""
+    from paddock.auth import check
+    from paddock.config.settings import get_settings
+
+    settings = get_settings()
+    if not settings.betfair_password:
+        raise click.ClickException(
+            "PADDOCK_BETFAIR_PASSWORD is not set in engine/.env — fill it in first."
+        )
+
+    result = check(settings)
+
+    click.echo(f"Logged in as: {settings.betfair_username}")
+    click.echo(f"Account currency: {result['currency_code']}")
+    click.echo(f"Discount rate: {result['discount_rate']}")
+    click.echo(f"Available to bet balance: {result['available_to_bet_balance']}")
+    click.echo(f"Exposure: {result['exposure']}")
+    click.echo(f"Event types visible: {result['event_type_count']}")
+    click.echo(f"App key type: {result['app_key_type']}")
+    if result["app_key_type_raw_version"] is not None:
+        click.echo(f"  (matched key version entry: {result['app_key_type_raw_version']})")
+    if result["app_key_type"] == "LIVE":
+        click.echo(
+            "WARNING: this looks like a LIVE app key, not delayed. "
+            "PADDOCK_MODE=live is hard-disabled regardless (see settings.py), "
+            "but double check you got the right key from Betfair."
+        )
+    elif result["app_key_type"] == "UNKNOWN":
+        click.echo(
+            "Could not confirm key type from getDeveloperAppKeys — check manually "
+            "at https://myaccount.betfair.com/accountdetails/mydetails under "
+            "'Application Keys'."
+        )
+
+
+@main.group()
 def data() -> None:
     """Historic data fetch/unpack (Betfair historic data API, Basic Plan)."""
 
@@ -106,6 +149,7 @@ def data_unpack(archive: Path, dest: Path | None) -> None:
     from_time, to_time = summary["date_range"]
     click.echo(f"Date range: {from_time} .. {to_time}")
     click.echo(f"Total size: {summary['total_size_bytes'] / 1024:.1f} KiB")
+    click.echo(f"Data plan: {summary['data_plans']}")
     click.echo("Venues:")
     for venue, count in summary["venues"].items():
         click.echo(f"  {venue}: {count}")
@@ -131,27 +175,50 @@ def sim() -> None:
     type=float,
     help="Market-seconds per real-second; 0 = as fast as possible",
 )
-def sim_run(strategy: str, data_path: Path, speed: float) -> None:
+@click.option(
+    "--fill-model",
+    type=click.Choice(["ladder", "ltp_cross"]),
+    default=None,
+    help="Defaults to config/engine.yaml's fill_model. ladder needs Advanced/Pro "
+    "plan data (order-book depth); ltp_cross is the optimistic Basic Plan "
+    "approximation — see config/engine.yaml.",
+)
+def sim_run(strategy: str, data_path: Path, speed: float, fill_model: str | None) -> None:
     from paddock.config.engine_config import load_engine_config
     from paddock.config.settings import get_settings
-    from paddock.sim.harness import discover_market_files, run_simulation
+    from paddock.config.strategies_config import load_strategy_params
+    from paddock.sim.harness import FillModelError, discover_market_files, run_simulation
     from paddock.strategies.registry import get_strategy_class
 
     settings = get_settings()
     engine_config = load_engine_config()
+    resolved_fill_model = fill_model or engine_config.fill_model
     strategy_cls = get_strategy_class(strategy)
+    strategy_kwargs = load_strategy_params(strategy)
     market_files = discover_market_files(data_path)
     if not market_files:
         raise click.ClickException(f"No market files found under {data_path}")
 
-    run_id = run_simulation(
-        strategy_cls,
-        market_files,
-        speed=speed,
-        commission_rate=engine_config.commission_rate,
-        data_dir=Path(settings.data_dir),
-    )
-    click.echo(f"Run {run_id} complete ({len(market_files)} market file(s))")
+    try:
+        run_id = run_simulation(
+            strategy_cls,
+            market_files,
+            speed=speed,
+            commission_rate=engine_config.commission_rate,
+            fill_model=resolved_fill_model,
+            data_dir=Path(settings.data_dir),
+            mode=settings.mode.value,
+            strategy_kwargs=strategy_kwargs,
+        )
+    except FillModelError as e:
+        raise click.ClickException(str(e)) from e
+
+    click.echo(f"Run {run_id} complete ({len(market_files)} market file(s)), fill_model={resolved_fill_model}")
+    if resolved_fill_model == "ltp_cross":
+        click.echo(
+            "NOTE: fill_model=ltp_cross — the P&L above is an OPTIMISTIC UPPER BOUND, "
+            "not a backtest result. No partial fills, no queue position modelled."
+        )
 
 
 if __name__ == "__main__":

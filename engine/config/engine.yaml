@@ -5,3 +5,14 @@
 # every SimulatedClient/BetfairClient flumine constructs, so flumine's own
 # Market.cleared() computes commission the same way our pnl worker does.
 commission_rate: 0.02
+
+# ladder: flumine's native matching, needs order-book depth + traded-volume
+#   data (atb/atl/trd) — Advanced/Pro historic plan, or any live stream.
+#   sim REFUSES to run this against data that lacks it (see
+#   paddock.data.historic.detect_data_plan / paddock.sim.harness).
+# ltp_cross: optimistic approximation for Basic Plan (free, ltp-only) data —
+#   a limit order is assumed fully matched at its own price on the first
+#   tick ltp crosses it. No partial fills, no queue position. P&L under
+#   this model is an upper bound, not a backtest result — see
+#   paddock.sim.fill_models.
+fill_model: ladder

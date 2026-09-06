@@ -16,6 +16,7 @@ from paddock.bus.events import (
     MarketClose,
     MarketOpen,
     PnlUpdate,
+    RunConfig,
     WorkerHeartbeat,
 )
 
@@ -32,6 +33,7 @@ class EventBus:
         self._workers: dict[str, WorkerHeartbeat] = {}
         self._markets: dict[str, MarketOpen] = {}
         self._pnl: PnlUpdate | None = None
+        self._run_config: RunConfig | None = None
 
     def publish(self, event: BaseEvent) -> None:
         self._history.append(event)
@@ -54,6 +56,8 @@ class EventBus:
             self._markets.pop(event.market_id, None)
         elif isinstance(event, PnlUpdate):
             self._pnl = event
+        elif isinstance(event, RunConfig):
+            self._run_config = event
 
     def subscribe(self, maxsize: int = 1000) -> asyncio.Queue[BaseEvent]:
         queue: asyncio.Queue[BaseEvent] = asyncio.Queue(maxsize=maxsize)
@@ -68,6 +72,7 @@ class EventBus:
             "workers": [w.model_dump(mode="json") for w in self._workers.values()],
             "markets": [m.model_dump(mode="json") for m in self._markets.values()],
             "pnl": self._pnl.model_dump(mode="json") if self._pnl else None,
+            "run_config": self._run_config.model_dump(mode="json") if self._run_config else None,
         }
 
 

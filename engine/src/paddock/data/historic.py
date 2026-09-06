@@ -33,6 +33,7 @@ import betfairlightweight
 
 from paddock.config.betfair_client import login, make_api_client
 from paddock.config.settings import Settings
+from paddock.data.manifest import DataPlan, append_manifest, detect_data_plan
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +141,7 @@ class UnpackedMarket:
     venue: str | None
     event_name: str | None
     size_bytes: int
+    data_plan: DataPlan
 
 
 def unpack(archive_path: Path, dest_root: Path) -> list[UnpackedMarket]:
@@ -177,6 +179,19 @@ def unpack(archive_path: Path, dest_root: Path) -> list[UnpackedMarket]:
         written.append(
             _write_market_stream(raw, _market_id_from_name(archive_path.name), dest_root)
         )
+
+    append_manifest(
+        dest_root,
+        [
+            {
+                "market_id": m.market_id,
+                "data_plan": m.data_plan,
+                "venue": m.venue,
+                "market_time": m.market_time,
+            }
+            for m in written
+        ],
+    )
     return written
 
 
@@ -209,15 +224,18 @@ def _write_market_stream(raw: bytes, market_id: str, dest_root: Path) -> Unpacke
         venue=venue,
         event_name=event_name,
         size_bytes=len(raw),
+        data_plan=detect_data_plan(dest),
     )
 
 
 def summarize(markets: list[UnpackedMarket]) -> dict:
     times = sorted(m.market_time for m in markets if m.market_time)
     venues = Counter(m.venue for m in markets if m.venue)
+    data_plans = Counter(m.data_plan for m in markets)
     return {
         "market_count": len(markets),
         "date_range": (times[0], times[-1]) if times else (None, None),
         "venues": dict(venues.most_common()),
         "total_size_bytes": sum(m.size_bytes for m in markets),
+        "data_plans": dict(data_plans),
     }

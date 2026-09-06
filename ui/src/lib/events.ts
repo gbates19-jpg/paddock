@@ -78,6 +78,17 @@ export interface PnlUpdate extends BaseEvent {
   market_pnl: number | null;
   run_pnl: number;
   commission: number;
+  // "ltp_cross" numbers are an optimistic upper bound, not a backtest
+  // result — see engine/src/paddock/sim/fill_models.py.
+  fill_model: string;
+}
+
+export interface RunConfig extends BaseEvent {
+  type: "run.config";
+  run_id: string;
+  mode: string;
+  fill_model: string;
+  commission_rate: number;
 }
 
 export interface LogEvent extends BaseEvent {
@@ -94,6 +105,7 @@ export type PaddockEvent =
   | StrategySignal
   | OrderEvent
   | PnlUpdate
+  | RunConfig
   | LogEvent;
 
 export interface Snapshot {
@@ -102,6 +114,7 @@ export interface Snapshot {
     workers: WorkerHeartbeat[];
     markets: MarketOpen[];
     pnl: PnlUpdate | null;
+    run_config: RunConfig | null;
   };
 }
 

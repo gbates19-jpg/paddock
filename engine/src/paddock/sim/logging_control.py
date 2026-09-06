@@ -46,11 +46,19 @@ class _OrderProgress:
 class PaddockLoggingControl(LoggingControl):
     NAME = "PADDOCK_LOGGING_CONTROL"
 
-    def __init__(self, bus: EventBus, run_id: str, commission_rate: float, data_dir: Path):
+    def __init__(
+        self,
+        bus: EventBus,
+        run_id: str,
+        commission_rate: float,
+        fill_model: str,
+        data_dir: Path,
+    ):
         super().__init__()
         self.bus = bus
         self.run_id = run_id
         self.commission_rate = commission_rate
+        self.fill_model = fill_model
         self.data_dir = Path(data_dir)
         self._progress: dict[str, _OrderProgress] = {}
         self._run_pnl = 0.0
@@ -155,6 +163,7 @@ class PaddockLoggingControl(LoggingControl):
                     market_pnl=profit,
                     run_pnl=self._run_pnl,
                     commission=our_commission,
+                    fill_model=self.fill_model,
                 )
             )
 
