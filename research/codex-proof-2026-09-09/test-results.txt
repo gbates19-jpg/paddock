@@ -1,0 +1,19 @@
+test_asof_and_exact_eof (test_proof.ProofTests.test_asof_and_exact_eof) ... ok
+test_back_hedge_both_settlements (test_proof.ProofTests.test_back_hedge_both_settlements) ... ok
+test_depth_capacity (test_proof.ProofTests.test_depth_capacity) ... ok
+test_flat_spread_costs_both_sides (test_proof.ProofTests.test_flat_spread_costs_both_sides) ... ok
+test_image_clears_old_book (test_proof.ProofTests.test_image_clears_old_book) ... ok
+test_inplay (test_proof.ProofTests.test_inplay) ... ok
+test_ladder_deletion (test_proof.ProofTests.test_ladder_deletion) ... ok
+test_lay_hedge_both_settlements (test_proof.ProofTests.test_lay_hedge_both_settlements) ... ok
+test_no_eof_backfill (test_proof.ProofTests.test_no_eof_backfill) ... ok
+test_out_of_order_quarantines (test_proof.ProofTests.test_out_of_order_quarantines) ... ok
+test_removed (test_proof.ProofTests.test_removed) ... ok
+test_schedule_revision_quarantine (test_proof.ProofTests.test_schedule_revision_quarantine) ... ok
+test_stale_entry (test_proof.ProofTests.test_stale_entry) ... ok
+test_suspension (test_proof.ProofTests.test_suspension) ... ok
+
+----------------------------------------------------------------------
+Ran 14 tests in 0.003s
+
+OK

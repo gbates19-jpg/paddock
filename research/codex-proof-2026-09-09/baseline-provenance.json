@@ -1,0 +1,35 @@
+{
+  "files": [
+    {
+      "path": "research/event_study.py",
+      "sha256": "3aa73ca03e2d703859136fdd02dd2d5682466395def0f932b68957d49b543b49",
+      "bytes": 15354
+    },
+    {
+      "path": "research/inplay/inplay_event_study.py",
+      "sha256": "3ab00a1f07cb2a890571b398a5e73147e8b3e4ff51b29530091876dc668b4865",
+      "bytes": 12965
+    },
+    {
+      "path": "research/event_study_full_corrected/event_study_report.json",
+      "sha256": "d3dede80c4ca414f68cf88ccfb49286ae9a2a365f1253d7595d0b160a7056811",
+      "bytes": 11797
+    },
+    {
+      "path": "research/event_study_full_corrected/event_study_rows.csv",
+      "sha256": "e701f4186da7e9fa2c25f504182c9212f390b1caa4c48f65630ec9189fb7f9e8",
+      "bytes": 22243229
+    },
+    {
+      "path": "data/manifest.jsonl",
+      "sha256": "c1835c87f3a62c6b1032818e194417c5dc65beda450679da3bc03e8f636ec6c4",
+      "bytes": 359120
+    },
+    {
+      "path": "engine/src/paddock/config/settings.py",
+      "sha256": "1a8de78cdfa7743795c0a84ab544d7fcdf5ada05a16c4b88d61b7a87e8ac6667",
+      "bytes": 2724
+    }
+  ],
+  "git_head": "ea9afbdb586f925eeea05838658d237563b1933c"
+}
