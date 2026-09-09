@@ -60,14 +60,14 @@ def _safe_log_price(price: float | None) -> float | None:
 
 
 def _net_back_return(entry_back: float, exit_lay: float, commission: float) -> float:
-    # £1 back stake: gross profit is exit_lay / entry_back - 1.
-    gross = exit_lay / entry_back - 1.0
+    # £1 back stake, hedged by laying: gross profit is B/L - 1.
+    gross = entry_back / exit_lay - 1.0
     return gross - max(gross, 0.0) * commission
 
 
 def _net_lay_return(entry_lay: float, exit_back: float, commission: float) -> float:
-    # £1 lay stake: gross profit is 1 - exit_back / entry_lay.
-    gross = 1.0 - exit_back / entry_lay
+    # £1 lay stake, hedged by backing: gross profit is 1 - entry_lay / exit_back.
+    gross = 1.0 - entry_lay / exit_back
     return gross - max(gross, 0.0) * commission
 
 
@@ -186,6 +186,14 @@ def parse_market(path: Path, commission: float) -> list[dict[str, Any]]:
                     runner_names[sid] = str(r.get("name", sid))
             if market_time_ms is None:
                 continue
+            # A snapshot is the last complete state at or before its target.
+            # A later update cannot be used for an earlier target.  Updates
+            # exactly at the target are applied below and are available at
+            # that decision timestamp.
+            for target in sorted(list(wanted)):
+                if target < pt and "state" not in wanted[target]:
+                    wanted[target]["state"] = _take_snapshot(states, pt)
+                    wanted[target]["state_timestamp_ms"] = pt
             for mc in obj.get("mc", []) or []:
                 if not isinstance(mc, dict):
                     continue
@@ -200,10 +208,10 @@ def parse_market(path: Path, commission: float) -> list[dict[str, Any]]:
                     if "status" in rc:
                         state["status"] = rc["status"]
                 event_count += 1
-            # A snapshot is the last complete state at or before its target.
             for target in sorted(list(wanted)):
-                if target <= pt and "state" not in wanted[target]:
+                if target == pt and "state" not in wanted[target]:
                     wanted[target]["state"] = _take_snapshot(states, pt)
+                    wanted[target]["state_timestamp_ms"] = pt
             if first_ts is None:
                 first_ts = pt
             # Once past the off time no later update can improve pre-off labels.
@@ -212,16 +220,12 @@ def parse_market(path: Path, commission: float) -> list[dict[str, Any]]:
 
     if market_time_ms is None or not wanted:
         return []
-    # Fill targets with the final pre-off state if a sparse file had no update exactly before target.
-    last_state = _take_snapshot(states, market_time_ms)
-    for info in wanted.values():
-        info.setdefault("state", last_state)
     rows: list[dict[str, Any]] = []
     for target_ts in sorted(base_targets):
         info = wanted[target_ts]
-        base = info["state"]
-        if not base:
+        if "state" not in info or not info["state"]:
             continue
+        base = info["state"]
         active = {sid: f for sid, f in base.items() if f.get("status") == "ACTIVE" and f.get("log_mid") is not None}
         if not active:
             continue
@@ -240,6 +244,7 @@ def parse_market(path: Path, commission: float) -> list[dict[str, Any]]:
                 "volume_burst_ratio": f["volume_burst_ratio"],
                 "relative_log_mid": f["log_mid"] - median_log,
                 "feature_timestamp_ms": target_ts,
+                "feature_state_timestamp_ms": info.get("state_timestamp_ms", target_ts),
                 "source_file": str(path), "event_count": event_count,
             }
             for horizon in HORIZONS:
