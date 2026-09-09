@@ -20,3 +20,53 @@ baseline:
   # - 1)) — comfortably covers `stake` at typical short-priced-favourite
   # prices without being so high it'd mask a runaway price/size bug.
   max_order_exposure: 50
+
+# Candidate strategy research (see docs/strategy-research.md) — params
+# calibrated against a real data sample before picking numbers, not
+# guessed. None of these are wired into any live/UI-facing default.
+
+drift_following:
+  lookback_seconds: 480          # 8 minutes
+  resample_seconds: 20
+  min_samples: 4
+  decision_seconds_before_off: 120
+  cancel_seconds_before_off: 15
+  z_threshold: 1.0
+  target_exposure: 2.0
+  max_order_exposure: 200        # LAY side on a long-priced drifter needs real headroom
+
+favourite_longshot_bias:
+  lay_price_threshold: 50.0      # matches where the pre-check's (weak) signal concentrated
+  entry_seconds_before_off: 180
+  cancel_seconds_before_off: 15
+  target_liability: 2.0
+  # NOT simply target_liability — the exchange's own minimum bet/payout
+  # floor (see paddock.strategies._price_utils.min_valid_size) forces a
+  # bigger stake than a naive £2-liability calc at very long prices, and
+  # 2dp stake rounding makes that floor's overshoot worse the longer the
+  # price (confirmed: up to ~£19.78 effective liability at the 990 price
+  # point, not £2) — this must clear that, not just the nominal target.
+  max_order_exposure: 25
+
+market_maker:
+  start_seconds_before_off: 600  # 10 minutes
+  stop_seconds_before_off: 30
+  requote_interval_seconds: 5
+  min_spread_ticks: 2
+  quote_size: 2.0
+  slippage_ticks: 3
+  # NOT just quote_size*(price-1) — the FLATTEN leg's size is whatever
+  # net imbalance has built up over the whole quoting window, not a
+  # single quote_size. Confirmed as a real bug via a live batch run: with
+  # this at 50, flatten attempts on a moderate accumulated imbalance got
+  # REJECTED outright (STRATEGY_EXPOSURE), and because a rejected
+  # flatten attempt doesn't reduce the remaining imbalance, that's a
+  # vicious cycle — the position only grows more one-sided each cycle
+  # until the closer gives up (position.unhedged) with a much bigger
+  # naked residual than a healthy market maker should ever carry.
+  # Favourite prices never exceed 10 across the whole 989-market batch
+  # (confirmed against BaselineFavouriteScalp's own entry prices) — 200
+  # comfortably covers even a badly-imbalanced ~22-unit flatten at that
+  # price ceiling, well beyond what normal two-sided quoting should ever
+  # build up.
+  max_order_exposure: 200

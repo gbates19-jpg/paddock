@@ -1,5 +1,18 @@
 # Run plan: does BaselineFavouriteScalp have an edge?
 
+> **Methodology correction (added later, see `docs/strategy-research.md`):**
+> the 40-market pilot sample below is drawn from *inside* the same
+> 989-market population the final batch result is computed on — not a
+> separate, untouched sample. An independent reviewer correctly flagged
+> this as research leakage. It doesn't make the t-stat below arithmetically
+> wrong, but this document's numbers should be read as **exploratory, not
+> a leakage-safe held-out test**. `docs/strategy-research.md`'s
+> "Methodology correction" section and its Results table re-evaluate
+> `BaselineFavouriteScalp` (unchanged, no re-tuning) on a proper held-out
+> slice (`engine/scripts/held_out_split.py`) alongside the three candidate
+> strategies — that comparison, not this document alone, is the one to
+> trust for a verdict.
+
 Every number in this document below "Pilot pass" is either read off disk
 before running anything, or comes from a small real pilot run used only to
 ground the statistics — nothing here is guessed. The full batch's results

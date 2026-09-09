@@ -4,11 +4,17 @@ from __future__ import annotations
 from flumine.strategy.strategy import BaseStrategy
 
 from paddock.strategies.baseline import BaselineFavouriteScalp
+from paddock.strategies.drift_following import DriftSteamFollower
+from paddock.strategies.favourite_longshot_bias import FavouriteLongshotBias
+from paddock.strategies.market_maker import LadderMarketMaker
 from paddock.strategies.passive import PassiveObserver
 
 REGISTRY: dict[str, type[BaseStrategy]] = {
     "passive": PassiveObserver,
     "baseline": BaselineFavouriteScalp,
+    "drift_following": DriftSteamFollower,
+    "favourite_longshot_bias": FavouriteLongshotBias,
+    "market_maker": LadderMarketMaker,
 }
 
 

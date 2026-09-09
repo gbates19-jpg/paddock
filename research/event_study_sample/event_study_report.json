@@ -1,0 +1,53 @@
+{
+  "commission_rate": 0.02,
+  "csv": "research/event_study_sample/event_study_rows.csv",
+  "executable_price_filter": "1.0 < price <= 100.0; extreme/no-quote levels treated as unavailable",
+  "failures": [],
+  "feature_rule": "state at or before snapshot; no future fields in features",
+  "files": [
+    "/Volumes/Mac Mini 2TB/projects/BetFair/data/pro/2015/07/1.119770058",
+    "/Volumes/Mac Mini 2TB/projects/BetFair/data/pro/2015/08/1.119762602",
+    "/Volumes/Mac Mini 2TB/projects/BetFair/data/pro/2015/08/1.119762606",
+    "/Volumes/Mac Mini 2TB/projects/BetFair/data/pro/2015/08/1.119762610",
+    "/Volumes/Mac Mini 2TB/projects/BetFair/data/pro/2015/08/1.119762614"
+  ],
+  "group_count": 1,
+  "groups": [
+    {
+      "date": "2015-08-01",
+      "liquidity_regime": "high",
+      "mean_net_back_return_15s": 0.04835016815406947,
+      "mean_net_back_return_30s": 0.048124667419151605,
+      "mean_net_back_return_5s": 0.04652597753531969,
+      "mean_net_back_return_60s": 0.060588363795429354,
+      "mean_net_lay_return_15s": 0.04347833640349005,
+      "mean_net_lay_return_30s": 0.04330202696167051,
+      "mean_net_lay_return_5s": 0.04548720775343362,
+      "mean_net_lay_return_60s": 0.04469304407597953,
+      "mean_relative_log_move_15s": 4.918956681120704e-05,
+      "mean_relative_log_move_30s": -0.001034950844863241,
+      "mean_relative_log_move_5s": -0.0012282439109013274,
+      "mean_relative_log_move_60s": 0.00115668257476333,
+      "rows": 410
+    }
+  ],
+  "label_horizons_sec": [
+    5,
+    15,
+    30,
+    60
+  ],
+  "markets_requested": 5,
+  "markets_with_rows": 4,
+  "read_only": true,
+  "row_count": 410,
+  "snapshot_offsets_sec": [
+    300,
+    180,
+    120,
+    60,
+    30,
+    15
+  ],
+  "study": "paddock_preoff_event_study"
+}
