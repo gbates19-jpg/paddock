@@ -44,6 +44,29 @@ def _merge_levels(book: dict[float, float], levels: Any) -> None:
             book[price] = size
 
 
+def _merge_indexed_levels(book: dict[float, float], index_map: dict[int, float], levels: Any) -> None:
+    """Apply Betfair BATB/BATL level deltas keyed by ladder index."""
+    if not isinstance(levels, list):
+        return
+    for level in levels:
+        if not isinstance(level, list) or len(level) < 3:
+            continue
+        try:
+            index, price, size = int(level[0]), float(level[1]), float(level[2])
+        except (TypeError, ValueError):
+            continue
+        old_price = index_map.get(index)
+        if old_price is not None and old_price != price:
+            book.pop(old_price, None)
+        if price <= 1.0 or size <= 0:
+            if old_price is not None:
+                book.pop(old_price, None)
+            index_map.pop(index, None)
+        else:
+            book[price] = size
+            index_map[index] = price
+
+
 def _best(book: dict[float, float], reverse: bool) -> tuple[float | None, float]:
     usable = [p for p in book if 1.0 < p <= MAX_EXECUTABLE_PRICE]
     if not usable:
@@ -136,7 +159,7 @@ def _state_feature(state: dict[str, Any], now_ms: int) -> dict[str, Any]:
 
 def _empty_state() -> dict[str, Any]:
     return {
-        "atb": {}, "atl": {}, "trd": {}, "status": "ACTIVE",
+        "atb": {}, "atl": {}, "atb_index": {}, "atl_index": {}, "trd": {}, "status": "ACTIVE",
         "market_status": "OPEN", "in_play": False, "vol_hist": deque(),
     }
 
@@ -227,7 +250,9 @@ def parse_market(path: Path, commission: float) -> list[dict[str, Any]]:
                         runner_names[sid] = str(runner.get("name", sid))
                 if mc.get("img"):
                     for state in states.values():
-                        state["atb"].clear(); state["atl"].clear(); state["trd"].clear()
+                        state["atb"].clear(); state["atl"].clear()
+                        state["atb_index"].clear(); state["atl_index"].clear()
+                        state["trd"].clear()
                 for rc in mc.get("rc", []) or []:
                     try:
                         sid = int(rc["id"])
@@ -236,6 +261,8 @@ def parse_market(path: Path, commission: float) -> list[dict[str, Any]]:
                     state = states.setdefault(sid, _empty_state())
                     for key, dest in (("atb", state["atb"]), ("atl", state["atl"]), ("trd", state["trd"])):
                         _merge_levels(dest, rc.get(key))
+                    _merge_indexed_levels(state["atb"], state["atb_index"], rc.get("batb"))
+                    _merge_indexed_levels(state["atl"], state["atl_index"], rc.get("batl"))
                     if "status" in rc:
                         state["status"] = rc["status"]
                 event_count += 1
@@ -293,6 +320,7 @@ def parse_market(path: Path, commission: float) -> list[dict[str, Any]]:
                 ff = future.get(sid, {})
                 row[f"future_back_{horizon}s"] = ff.get("best_back")
                 row[f"future_lay_{horizon}s"] = ff.get("best_lay")
+                row[f"future_state_timestamp_ms_{horizon}s"] = wanted.get(target_ts + horizon * 1000, {}).get("state_timestamp_ms")
                 # Betfair action semantics: BACK consumes atb; LAY consumes
                 # atl.  Crossing from atb to atl on an unchanged book must
                 # lose the spread; swapping these fields manufactures an

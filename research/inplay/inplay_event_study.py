@@ -128,6 +128,9 @@ def parse_market(path, comm, latency):
             for st in states.values(): st['inplay']=new_ip; st['status']=new_status
         for mc in o.get('mc',[]) or []:
             if not isinstance(mc,dict): continue
+            if mc.get('img'):
+                for state in states.values():
+                    state['atb'].clear(); state['atl'].clear(); state['atb_i'].clear(); state['atl_i'].clear(); state['trd'].clear()
             for rc in mc.get('rc',[]) or []:
                 try:sid=int(rc['id'])
                 except (KeyError,TypeError,ValueError): continue

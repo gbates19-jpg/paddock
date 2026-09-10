@@ -11,13 +11,23 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 
-from research.event_study import _net_back_return, _net_lay_return, parse_market
+from research.event_study import _merge_indexed_levels, _net_back_return, _net_lay_return, parse_market
 from research.inplay.inplay_event_study import ret_back, ret_lay
 import pytest
 
 
 ATB = 2.00
 ATL = 2.02
+
+
+def test_indexed_batb_batl_moves_and_removes_levels():
+    book, indexes = {}, {}
+    _merge_indexed_levels(book, indexes, [[0, 2.0, 10], [1, 2.02, 5]])
+    assert book == {2.0: 10.0, 2.02: 5.0}
+    _merge_indexed_levels(book, indexes, [[0, 2.04, 7]])
+    assert book == {2.04: 7.0, 2.02: 5.0}
+    _merge_indexed_levels(book, indexes, [[1, 2.02, 0]])
+    assert book == {2.04: 7.0}
 
 
 def test_unchanged_book_loses_spread_in_both_directions():
