@@ -25,6 +25,7 @@ SNAPSHOT_OFFSETS = (300, 180, 120, 60, 30, 15)
 HORIZONS = (5, 15, 30, 60)
 EPS = 1e-9
 MAX_EXECUTABLE_PRICE = 100.0
+MAX_SNAPSHOT_AGE_MS = 5_000
 
 
 def _merge_levels(book: dict[float, float], levels: Any) -> None:
@@ -41,6 +42,29 @@ def _merge_levels(book: dict[float, float], levels: Any) -> None:
             book.pop(price, None)
         else:
             book[price] = size
+
+
+def _merge_indexed_levels(book: dict[float, float], index_map: dict[int, float], levels: Any) -> None:
+    """Apply Betfair BATB/BATL level deltas keyed by ladder index."""
+    if not isinstance(levels, list):
+        return
+    for level in levels:
+        if not isinstance(level, list) or len(level) < 3:
+            continue
+        try:
+            index, price, size = int(level[0]), float(level[1]), float(level[2])
+        except (TypeError, ValueError):
+            continue
+        old_price = index_map.get(index)
+        if old_price is not None and old_price != price:
+            book.pop(old_price, None)
+        if price <= 1.0 or size <= 0:
+            if old_price is not None:
+                book.pop(old_price, None)
+            index_map.pop(index, None)
+        else:
+            book[price] = size
+            index_map[index] = price
 
 
 def _best(book: dict[float, float], reverse: bool) -> tuple[float | None, float]:
@@ -60,14 +84,21 @@ def _safe_log_price(price: float | None) -> float | None:
 
 
 def _net_back_return(entry_back: float, exit_lay: float, commission: float) -> float:
-    # £1 back stake: gross profit is exit_lay / entry_back - 1.
-    gross = exit_lay / entry_back - 1.0
+    """Return for BACK entry at ``atb`` followed by LAY exit at ``atl``.
+
+    Betfair's Stream API names these ladders by the action available to the
+    incoming bettor: ``atb`` is Available To Back and ``atl`` is Available To
+    Lay.  This is deliberately not a conventional bid/ask relabelling.
+    """
+    # £1 back stake, hedged by laying: gross profit is entry_back/exit_lay - 1.
+    gross = entry_back / exit_lay - 1.0
     return gross - max(gross, 0.0) * commission
 
 
 def _net_lay_return(entry_lay: float, exit_back: float, commission: float) -> float:
-    # £1 lay stake: gross profit is 1 - exit_back / entry_lay.
-    gross = 1.0 - exit_back / entry_lay
+    """Return for LAY entry at ``atl`` followed by BACK exit at ``atb``."""
+    # £1 lay stake, hedged by backing: gross profit is 1 - entry_lay/exit_back.
+    gross = 1.0 - entry_lay / exit_back
     return gross - max(gross, 0.0) * commission
 
 
@@ -121,11 +152,16 @@ def _state_feature(state: dict[str, Any], now_ms: int) -> dict[str, Any]:
         "depth_imbalance": imbalance, "traded_volume": total_traded,
         "volume_30s": vol30, "volume_burst_ratio": burst,
         "log_mid": math.log((bp + lp) / 2.0) if bp and lp else None,
+        "market_status": state.get("market_status", "OPEN"),
+        "in_play": bool(state.get("in_play", False)),
     }
 
 
 def _empty_state() -> dict[str, Any]:
-    return {"atb": {}, "atl": {}, "trd": {}, "status": "ACTIVE", "vol_hist": deque()}
+    return {
+        "atb": {}, "atl": {}, "atb_index": {}, "atl_index": {}, "trd": {}, "status": "ACTIVE",
+        "market_status": "OPEN", "in_play": False, "vol_hist": deque(),
+    }
 
 
 def _take_snapshot(states: dict[int, dict[str, Any]], ts: int) -> dict[int, dict[str, Any]]:
@@ -150,6 +186,8 @@ def parse_market(path: Path, commission: float) -> list[dict[str, Any]]:
     base_targets: list[int] = []
     event_count = 0
     first_ts = None
+    last_pt: int | None = None
+    last_state_timestamp: int | None = None
 
     with path.open("r", encoding="utf-8") as fh:
         for line in fh:
@@ -161,34 +199,60 @@ def parse_market(path: Path, commission: float) -> list[dict[str, Any]]:
             if not isinstance(pt, (int, float)):
                 continue
             pt = int(pt)
-            definition = _market_definition(obj)
-            if definition and not definition_seen:
-                definition_seen = True
-                market_id = str(_market_id(obj) or market_id)
-                mt = definition.get("marketTime")
-                if mt:
-                    dt = datetime.fromisoformat(str(mt).replace("Z", "+00:00"))
-                    market_time_ms = int(dt.timestamp() * 1000)
-                    market_date = _local_date(str(mt))
-                    target_offsets = [(off * 1000, off) for off in SNAPSHOT_OFFSETS]
-                    for off_ms, off in target_offsets:
-                        base_ts = market_time_ms - off_ms
-                        base_targets.append(base_ts)
-                        wanted[base_ts] = {"offset": off}
-                        for horizon in HORIZONS:
-                            wanted.setdefault(base_ts + horizon * 1000, {})
-                for r in definition.get("runners", []) or []:
-                    try:
-                        sid = int(r["id"])
-                    except (KeyError, TypeError, ValueError):
-                        continue
-                    states.setdefault(sid, _empty_state())["status"] = r.get("status", "ACTIVE")
-                    runner_names[sid] = str(r.get("name", sid))
-            if market_time_ms is None:
-                continue
+            if last_pt is not None and pt < last_pt:
+                raise ValueError(f"out-of-order publish time: {pt} after {last_pt}")
+            # Capture targets using the last state whose source timestamp is
+            # actually <= the target.  The state before a later event is not
+            # timestamped with that later event.
+            if market_time_ms is not None and last_state_timestamp is not None:
+                for target in sorted(list(wanted)):
+                    if (
+                        target < pt
+                        and "state" not in wanted[target]
+                        and last_state_timestamp <= target
+                        and target - last_state_timestamp <= MAX_SNAPSHOT_AGE_MS
+                    ):
+                        wanted[target]["state"] = _take_snapshot(states, last_state_timestamp)
+                        wanted[target]["state_timestamp_ms"] = last_state_timestamp
             for mc in obj.get("mc", []) or []:
                 if not isinstance(mc, dict):
                     continue
+                definition = mc.get("marketDefinition")
+                if isinstance(definition, dict):
+                    if not definition_seen:
+                        definition_seen = True
+                        market_id = str(_market_id(obj) or market_id)
+                    mt = definition.get("marketTime")
+                    if market_time_ms is None and mt:
+                        dt = datetime.fromisoformat(str(mt).replace("Z", "+00:00"))
+                        market_time_ms = int(dt.timestamp() * 1000)
+                        market_date = _local_date(str(mt))
+                        for off in SNAPSHOT_OFFSETS:
+                            base_ts = market_time_ms - off * 1000
+                            base_targets.append(base_ts)
+                            wanted[base_ts] = {"offset": off}
+                            for horizon in HORIZONS:
+                                wanted.setdefault(base_ts + horizon * 1000, {})
+                    if "status" in definition:
+                        for state in states.values():
+                            state["market_status"] = definition["status"]
+                    if "inPlay" in definition:
+                        for state in states.values():
+                            state["in_play"] = bool(definition["inPlay"])
+                    for runner in definition.get("runners", []) or []:
+                        try:
+                            sid = int(runner["id"])
+                        except (KeyError, TypeError, ValueError):
+                            continue
+                        state = states.setdefault(sid, _empty_state())
+                        if "status" in runner:
+                            state["status"] = runner["status"]
+                        runner_names[sid] = str(runner.get("name", sid))
+                if mc.get("img"):
+                    for state in states.values():
+                        state["atb"].clear(); state["atl"].clear()
+                        state["atb_index"].clear(); state["atl_index"].clear()
+                        state["trd"].clear()
                 for rc in mc.get("rc", []) or []:
                     try:
                         sid = int(rc["id"])
@@ -197,32 +261,40 @@ def parse_market(path: Path, commission: float) -> list[dict[str, Any]]:
                     state = states.setdefault(sid, _empty_state())
                     for key, dest in (("atb", state["atb"]), ("atl", state["atl"]), ("trd", state["trd"])):
                         _merge_levels(dest, rc.get(key))
+                    _merge_indexed_levels(state["atb"], state["atb_index"], rc.get("batb"))
+                    _merge_indexed_levels(state["atl"], state["atl_index"], rc.get("batl"))
                     if "status" in rc:
                         state["status"] = rc["status"]
                 event_count += 1
-            # A snapshot is the last complete state at or before its target.
+            if market_time_ms is None:
+                continue
             for target in sorted(list(wanted)):
-                if target <= pt and "state" not in wanted[target]:
+                if target == pt and "state" not in wanted[target]:
                     wanted[target]["state"] = _take_snapshot(states, pt)
+                    wanted[target]["state_timestamp_ms"] = pt
             if first_ts is None:
                 first_ts = pt
+            last_pt = pt
+            last_state_timestamp = pt
             # Once past the off time no later update can improve pre-off labels.
             if pt > market_time_ms + 60_000:
                 break
 
     if market_time_ms is None or not wanted:
         return []
-    # Fill targets with the final pre-off state if a sparse file had no update exactly before target.
-    last_state = _take_snapshot(states, market_time_ms)
-    for info in wanted.values():
-        info.setdefault("state", last_state)
     rows: list[dict[str, Any]] = []
     for target_ts in sorted(base_targets):
         info = wanted[target_ts]
-        base = info["state"]
-        if not base:
+        if "state" not in info or not info["state"]:
             continue
-        active = {sid: f for sid, f in base.items() if f.get("status") == "ACTIVE" and f.get("log_mid") is not None}
+        base = info["state"]
+        active = {
+            sid: f for sid, f in base.items()
+            if f.get("status") == "ACTIVE"
+            and f.get("market_status") == "OPEN"
+            and not f.get("in_play")
+            and f.get("log_mid") is not None
+        }
         if not active:
             continue
         median_log = statistics.median(f["log_mid"] for f in active.values())
@@ -240,6 +312,7 @@ def parse_market(path: Path, commission: float) -> list[dict[str, Any]]:
                 "volume_burst_ratio": f["volume_burst_ratio"],
                 "relative_log_mid": f["log_mid"] - median_log,
                 "feature_timestamp_ms": target_ts,
+                "feature_state_timestamp_ms": info.get("state_timestamp_ms", target_ts),
                 "source_file": str(path), "event_count": event_count,
             }
             for horizon in HORIZONS:
@@ -247,16 +320,17 @@ def parse_market(path: Path, commission: float) -> list[dict[str, Any]]:
                 ff = future.get(sid, {})
                 row[f"future_back_{horizon}s"] = ff.get("best_back")
                 row[f"future_lay_{horizon}s"] = ff.get("best_lay")
-                # Conservative executable markout: cross the spread to enter
-                # and cross it again to exit.  Using best_back -> future
-                # best_lay would manufacture a positive return in a flat
-                # market by assuming a passive fill with no queue model.
-                if f["best_lay"] and ff.get("best_back"):
-                    row[f"net_back_return_{horizon}s"] = _net_back_return(f["best_lay"], ff["best_back"], commission)
+                row[f"future_state_timestamp_ms_{horizon}s"] = wanted.get(target_ts + horizon * 1000, {}).get("state_timestamp_ms")
+                # Betfair action semantics: BACK consumes atb; LAY consumes
+                # atl.  Crossing from atb to atl on an unchanged book must
+                # lose the spread; swapping these fields manufactures an
+                # apparent positive return.
+                if f["best_back"] and ff.get("best_lay"):
+                    row[f"net_back_return_{horizon}s"] = _net_back_return(f["best_back"], ff["best_lay"], commission)
                 else:
                     row[f"net_back_return_{horizon}s"] = None
-                if f["best_back"] and ff.get("best_lay"):
-                    row[f"net_lay_return_{horizon}s"] = _net_lay_return(f["best_back"], ff["best_lay"], commission)
+                if f["best_lay"] and ff.get("best_back"):
+                    row[f"net_lay_return_{horizon}s"] = _net_lay_return(f["best_lay"], ff["best_back"], commission)
                 else:
                     row[f"net_lay_return_{horizon}s"] = None
                 if f["log_mid"] is not None and ff.get("log_mid") is not None:
@@ -293,7 +367,19 @@ def summarize(rows: list[dict[str, Any]], files: list[Path], commission: float) 
         groups[key] = g
     return {
         "study": "paddock_preoff_event_study",
+        "report_version": "v3-atb-atl",
         "read_only": True, "commission_rate": commission,
+        "betfair_field_semantics": {
+            "atb": "Available To Back; BACK entry consumes atb",
+            "atl": "Available To Lay; LAY entry consumes atl",
+            "source": "https://betfair-developer-docs.atlassian.net/wiki/spaces/1smk3cen4v3lu3yomq5qye0ni/pages/2687396/Exchange+Stream+API",
+        },
+        "payoff_sanity": {
+            "unchanged_book": {"atb": 2.0, "atl": 2.02},
+            "back_then_lay": "2.00/2.02 - 1 < 0",
+            "lay_then_back": "1 - 2.02/2.00 < 0",
+        },
+        "snapshot_max_age_ms": MAX_SNAPSHOT_AGE_MS,
         "feature_rule": "state at or before snapshot; no future fields in features",
         "executable_price_filter": f"1.0 < price <= {MAX_EXECUTABLE_PRICE}; extreme/no-quote levels treated as unavailable",
         "snapshot_offsets_sec": list(SNAPSHOT_OFFSETS), "label_horizons_sec": list(HORIZONS),

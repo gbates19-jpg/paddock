@@ -1,0 +1,46 @@
+{
+  "archive": {
+    "bytes": 478323712,
+    "path": "/Volumes/Mac Mini 2TB/projects/BetFair/data/raw/data.tar",
+    "sha256": "f20593f27ea60a96e8b9ee2f876c5281157d300dbd734b51ae2c4bc7b350f511"
+  },
+  "calibration_used": false,
+  "commission_rate": 0.02,
+  "csv": "research/september_2026_eval_v1/september_quote_markouts.csv",
+  "duplicate_output_identity_rows": 0,
+  "eligible_markets": 232,
+  "exclusions": {
+    "canonical_selection": "one exact 1.<market_id>.bz2 member per eligible market; duplicate event/member views excluded",
+    "country": "only GB and IE retained",
+    "market_type": "only WIN retained",
+    "other_countries_and_types_remain_in_inventory": true
+  },
+  "identity": {
+    "fields": [
+      "market_id",
+      "runner_id",
+      "decision_timestamp_ms",
+      "horizon_sec"
+    ],
+    "unique": true
+  },
+  "invalid_source_timestamp_rows": 0,
+  "latency_or_bet_delay_tuning": "none; PR #3 fixed 1000ms in-play latency and this run did not alter it",
+  "official_semantics_source": "https://betfair-developer-docs.atlassian.net/wiki/spaces/1smk3cen4v3lu3yomq5qye0ni/pages/2687396/Exchange+Stream+API",
+  "parser_failures": [],
+  "payoff_sanity": {
+    "atb": 2.0,
+    "atl": 2.02,
+    "back_then_lay": "2.00/2.02 - 1 < 0",
+    "lay_then_back": "1 - 2.02/2.00 < 0"
+  },
+  "real_orders": false,
+  "report_version": "september-2026-v1",
+  "result_kind": "quote_markout",
+  "rows": 44432,
+  "selected_members": 232,
+  "september_is_sealed_evaluation": true,
+  "simulated_fills": false,
+  "source_revision": "3cb1d43f40ca7478867d22ac9a8251148b3a2e55",
+  "strategy_pnl": false
+}
