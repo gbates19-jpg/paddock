@@ -71,19 +71,26 @@ def snap(states): return {sid:feat(st) for sid,st in states.items()}
 def parse_time(s): return datetime.fromisoformat(str(s).replace('Z','+00:00'))
 def date_of(s): return parse_time(s).astimezone(timezone.utc).date().isoformat()
 
-def ret_back(entry_lay, exit_back, comm):
-    if not entry_lay or not exit_back: return None
-    gross=exit_back/entry_lay-1
+def ret_back(entry_back, exit_lay, comm):
+    if not entry_back or not exit_lay: return None
+    gross=entry_back/exit_lay-1
     return gross-max(gross,0)*comm
 
-def ret_lay(entry_back, exit_lay, comm):
-    if not entry_back or not exit_lay: return None
-    gross=1-exit_lay/entry_back
+def ret_lay(entry_lay, exit_back, comm):
+    if not entry_lay or not exit_back: return None
+    gross=1-entry_lay/exit_back
     return gross-max(gross,0)*comm
 
 def parse_market(path, comm, latency):
-    states={}; names={}; events=[]; pending=[]; market_id=path.name; market_date=''; last_def=None; event_seq=0
-    history=deque()  # (pt, snapshot)
+    """Parse events with entry available only after reaction latency.
+
+    Each event's entry is the first observed OPEN quote at or after
+    event_ts + latency.  Horizons are measured from that entry target, not
+    from the pre-event snapshot.  Actual source timestamps are retained;
+    missing/stale quotes are excluded rather than backfilled.
+    """
+    states={}; names={}; pending=[]; rows=[]; market_id=path.name; market_date=''; last_def=None; event_seq=0
+    history=deque()
     with path.open(encoding='utf-8') as fh:
       for line in fh:
         try:o=json.loads(line)
@@ -96,10 +103,8 @@ def parse_market(path, comm, latency):
             if not isinstance(mc,dict): continue
             if isinstance(mc.get('marketDefinition'),dict): defs.append(mc['marketDefinition'])
             if mc.get('id'): market_id=str(mc['id'])
-        # Definition changes are the event clock. Capture the state immediately before change.
         for d in defs:
-            if not market_date and d.get('marketTime'):
-                market_date=date_of(d['marketTime'])
+            if not market_date and d.get('marketTime'): market_date=date_of(d['marketTime'])
             if not states:
                 for r in d.get('runners',[]) or []:
                     try:sid=int(r['id'])
@@ -107,66 +112,58 @@ def parse_market(path, comm, latency):
                     states[sid]=empty(); names[sid]=str(r.get('name',sid)); states[sid]['status']=r.get('status','OPEN')
             old=last_def
             old_ip=bool(old.get('inPlay')) if old else False
-            new_ip=bool(d.get('inPlay'))
+            new_ip=bool(d.get('inPlay',old_ip))
             old_status=str(old.get('status','OPEN')) if old else str(d.get('status','OPEN'))
-            new_status=str(d.get('status','OPEN'))
-            if old and (not old_ip and new_ip):
-                event_seq+=1; events.append({'event_id':event_seq,'event_type':'inplay_transition','event_ts':pt,'base':snap(states),'date':market_date})
+            new_status=str(d.get('status',old_status))
+            if old and not old_ip and new_ip:
+                event_seq+=1; pending.append({'event_id':event_seq,'event_type':'inplay_transition','event_ts':pt,'date':market_date,'prior10':next((ss for ts,ss in reversed(history) if ts<=pt-10000),{})})
             if old and old_status=='SUSPENDED' and new_status=='OPEN':
-                event_seq+=1; events.append({'event_id':event_seq,'event_type':'reopen','event_ts':pt,'base':snap(states),'date':market_date})
+                event_seq+=1; pending.append({'event_id':event_seq,'event_type':'reopen','event_ts':pt,'date':market_date,'prior10':next((ss for ts,ss in reversed(history) if ts<=pt-10000),{})})
             for r in d.get('runners',[]) or []:
                 try:sid=int(r['id'])
                 except (KeyError,TypeError,ValueError): continue
-                states.setdefault(sid,empty()); names[sid]=str(r.get('name',sid));
+                states.setdefault(sid,empty()); names[sid]=str(r.get('name',sid))
                 if r.get('status') is not None: states[sid]['status']=r['status']
             last_def=d
             for st in states.values(): st['inplay']=new_ip; st['status']=new_status
-        # Apply runner changes at this timestamp.
         for mc in o.get('mc',[]) or []:
             if not isinstance(mc,dict): continue
             for rc in mc.get('rc',[]) or []:
                 try:sid=int(rc['id'])
                 except (KeyError,TypeError,ValueError): continue
                 states.setdefault(sid,empty()); update(states[sid],rc)
-        if states:
-            current=snap(states); history.append((pt,current))
-            while history and history[0][0] < pt-120000: history.popleft()
-            for e in events:
-                if 'scheduled' not in e:
-                    e['scheduled']={h:e['event_ts']+latency+h*1000 for h in HORIZONS}
-                    prior=None
-                    for ts,ss in reversed(history):
-                        if ts <= e['event_ts']-10000:
-                            prior=ss; break
-                    e['prior10']=prior
-                    e['scheduled_keys']=set(e['scheduled'].values())
-                    e['scheduled_done']={}
-                    pending.append(e)
-            # First observed state at/after each nominal target is label state; retain actual gap.
-            for e in pending:
-                for h,target in e['scheduled'].items():
-                    if h in e['scheduled_done']: continue
-                    if pt>=target:
-                        e['scheduled_done'][h]=(pt,current); e['scheduled_done'][h+'_gap_ms'] if False else None
-                # once all labels captured, emit
-                if len(e['scheduled_done'])==len(HORIZONS):
-                    base=e['base']; prior=e.get('prior10') or {}
-                    for sid,b in base.items():
-                        f=current.get(sid) if False else None
-                        if b.get('mid') is None: continue
-                        p=prior.get(sid,{})
-                        pre=(b['mid']-p.get('mid')) if p.get('mid') is not None else None
-                        row={'market_id':market_id,'date':e['date'],'event_id':e['event_id'],'event_type':e['event_type'],'event_ts':e['event_ts'],'runner_id':sid,'runner_name':names.get(sid,str(sid)),'pre_move_10s':pre,'base_back':b.get('back'),'base_lay':b.get('lay')}
-                        for h in HORIZONS:
-                            actual,ss=e['scheduled_done'][h]; q=ss.get(sid,{})
-                            row[f'h{h}_actual_ts']=actual; row[f'h{h}_latency_gap_ms']=actual-(e['event_ts']+latency+h*1000)
-                            row[f'h{h}_back']=q.get('back'); row[f'h{h}_lay']=q.get('lay'); row[f'h{h}_move']=(q['mid']-b['mid']) if q.get('mid') is not None else None
-                            row[f'h{h}_back_ret']=ret_back(b.get('lay'),q.get('back'),comm); row[f'h{h}_lay_ret']=ret_lay(b.get('back'),q.get('lay'),comm)
-                        yield row
-                    e['done']=True
-            pending[:]=[e for e in pending if not e.get('done')]
-        # stop after a generous post-market tail only if no useful data; files are small enough to scan fully
-    return
+        if not states: continue
+        current=snap(states); history.append((pt,current))
+        while history and history[0][0]<pt-120000: history.popleft()
+        for e in pending:
+            if 'entry' not in e and pt>=e['event_ts']+latency:
+                e['entry']=(pt,current)
+            if 'entry' not in e: continue
+            if 'labels' not in e: e['labels']={}
+            entry_ts=e['entry'][0]
+            for h in HORIZONS:
+                target=entry_ts+h*1000
+                if h not in e['labels'] and pt>=target: e['labels'][h]=(pt,current)
+            if len(e['labels'])!=len(HORIZONS): continue
+            base=current=e['entry'][1]; prior=e.get('prior10') or {}
+            for sid,b in base.items():
+                if b.get('mid') is None: continue
+                p=prior.get(sid,{})
+                pre=(b['mid']-p.get('mid')) if p.get('mid') is not None else None
+                row={'market_id':market_id,'date':e['date'],'event_id':e['event_id'],'event_type':e['event_type'],'event_ts':e['event_ts'],'entry_actual_ts':e['entry'][0],'entry_latency_gap_ms':e['entry'][0]-(e['event_ts']+latency),'runner_id':sid,'runner_name':names.get(sid,str(sid)),'pre_move_10s':pre,'base_back':b.get('back'),'base_lay':b.get('lay')}
+                for h in HORIZONS:
+                    actual,ss=e['labels'][h]; q=ss.get(sid,{})
+                    row[f'h{h}_actual_ts']=actual; row[f'h{h}_latency_gap_ms']=actual-(e['entry'][0]+h*1000)
+                    row[f'h{h}_back']=q.get('back'); row[f'h{h}_lay']=q.get('lay'); row[f'h{h}_move']=(q['mid']-b['mid']) if q.get('mid') is not None else None
+                    # Betfair's atb/atl names describe the action available
+                    # to the incoming bettor: BACK consumes atb, LAY consumes
+                    # atl.  Keep the same side mapping in the independent
+                    # in-play study as in the pre-off study.
+                    row[f'h{h}_back_ret']=ret_back(b.get('back'),q.get('lay'),comm); row[f'h{h}_lay_ret']=ret_lay(b.get('lay'),q.get('back'),comm)
+                rows.append(row)
+            e['done']=True
+        pending[:]=[e for e in pending if not e.get('done')]
+    yield from rows
 
 def discover(root): return sorted(p for p in root.rglob('1.*') if p.is_file() and p.name[2:].isdigit())
 
@@ -178,7 +175,7 @@ def cluster_stats(rows, key, subset):
 
 def summarize(rows, files, comm, latency):
     dates=sorted({r['date'] for r in rows}); cut=max(1,int(len(dates)*0.7)); train=set(dates[:cut]); test=set(dates[cut:])
-    out={'study':'paddock_inplay_suspension_event_study','read_only':True,'commission_rate':comm,'latency_ms':latency,'max_executable_price':MAX_PRICE,'files_requested':len(files),'markets_with_events':len({r['market_id'] for r in rows}),'row_count':len(rows),'dates':dates,'calibration_dates':sorted(train),'heldout_dates':sorted(test),'horizons_sec':list(HORIZONS),'event_types':{t:sum(r['event_type']==t for r in rows) for t in sorted({r['event_type'] for r in rows})}}
+    out={'study':'paddock_inplay_suspension_event_study','report_version':'v3-atb-atl','read_only':True,'commission_rate':comm,'latency_ms':latency,'betfair_field_semantics':{'atb':'Available To Back; BACK entry consumes atb','atl':'Available To Lay; LAY entry consumes atl','source':'https://betfair-developer-docs.atlassian.net/wiki/spaces/1smk3cen4v3lu3yomq5qye0ni/pages/2687396/Exchange+Stream+API'},'payoff_sanity':{'unchanged_book':{'atb':2.0,'atl':2.02},'back_then_lay':'2.00/2.02 - 1 < 0','lay_then_back':'1 - 2.02/2.00 < 0'},'max_executable_price':MAX_PRICE,'files_requested':len(files),'markets_with_events':len({r['market_id'] for r in rows}),'row_count':len(rows),'dates':dates,'calibration_dates':sorted(train),'heldout_dates':sorted(test),'horizons_sec':list(HORIZONS),'event_types':{t:sum(r['event_type']==t for r in rows) for t in sorted({r['event_type'] for r in rows})}}
     results=[]
     # Calibrate threshold and direction separately for continuation/reversal, then freeze on held-out.
     for direction in ('continuation','reversal'):
