@@ -127,7 +127,7 @@ class TimestampBehaviourTests(unittest.TestCase):
         events = [
             {'pt': t-1000, 'mc': [{'id': '1.1', 'marketDefinition': d, 'rc': [{'id': 1, 'atb': [[2.0, 100]], 'atl': [[2.02, 100]]}]}]},
             # Exact target timestamp
-            {'pt': t, 'mc': [{'id': '1.1', 'rc': [{'id': 1, 'atb': [[2.5, 100]], 'atl': [[2.52, 100]]}]}]},
+            {'pt': t, 'mc': [{'id': '1.1', 'img': True, 'rc': [{'id': 1, 'atb': [[2.5, 100]], 'atl': [[2.52, 100]]}]}]},
             {'pt': t+5000, 'mc': [{'id': '1.1', 'rc': []}]}
         ]
         rows = self.make_minimal_market(events)
@@ -225,7 +225,6 @@ class TimestampBehaviourTests(unittest.TestCase):
             {'pt': t-1000, 'mc': [{'id': '1.1', 'marketDefinition': d, 'rc': [{'id': 1, 'atb': [[2.0, 100]], 'atl': [[2.02, 100]]}]}]},
             {'pt': t-2000, 'mc': [{'id': '1.1', 'rc': [{'id': 1, 'atb': [[3.0, 100]], 'atl': [[3.05, 100]]}]}]},  # out of order!
         ]
-        rows = self.make_minimal_market(events)
         with self.assertRaises(ValueError):
             self.make_minimal_market(events)
 

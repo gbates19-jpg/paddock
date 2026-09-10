@@ -71,14 +71,14 @@ def snap(states): return {sid:feat(st) for sid,st in states.items()}
 def parse_time(s): return datetime.fromisoformat(str(s).replace('Z','+00:00'))
 def date_of(s): return parse_time(s).astimezone(timezone.utc).date().isoformat()
 
-def ret_back(entry_lay, exit_back, comm):
-    if not entry_lay or not exit_back: return None
-    gross=exit_back/entry_lay-1
+def ret_back(entry_back, exit_lay, comm):
+    if not entry_back or not exit_lay: return None
+    gross=entry_back/exit_lay-1
     return gross-max(gross,0)*comm
 
-def ret_lay(entry_back, exit_lay, comm):
-    if not entry_back or not exit_lay: return None
-    gross=1-exit_lay/entry_back
+def ret_lay(entry_lay, exit_back, comm):
+    if not entry_lay or not exit_back: return None
+    gross=1-entry_lay/exit_back
     return gross-max(gross,0)*comm
 
 def parse_market(path, comm, latency):
@@ -155,6 +155,10 @@ def parse_market(path, comm, latency):
                     actual,ss=e['labels'][h]; q=ss.get(sid,{})
                     row[f'h{h}_actual_ts']=actual; row[f'h{h}_latency_gap_ms']=actual-(e['entry'][0]+h*1000)
                     row[f'h{h}_back']=q.get('back'); row[f'h{h}_lay']=q.get('lay'); row[f'h{h}_move']=(q['mid']-b['mid']) if q.get('mid') is not None else None
+                    # Betfair's atb/atl names describe the action available
+                    # to the incoming bettor: BACK consumes atb, LAY consumes
+                    # atl.  Keep the same side mapping in the independent
+                    # in-play study as in the pre-off study.
                     row[f'h{h}_back_ret']=ret_back(b.get('back'),q.get('lay'),comm); row[f'h{h}_lay_ret']=ret_lay(b.get('lay'),q.get('back'),comm)
                 rows.append(row)
             e['done']=True
@@ -171,7 +175,7 @@ def cluster_stats(rows, key, subset):
 
 def summarize(rows, files, comm, latency):
     dates=sorted({r['date'] for r in rows}); cut=max(1,int(len(dates)*0.7)); train=set(dates[:cut]); test=set(dates[cut:])
-    out={'study':'paddock_inplay_suspension_event_study','read_only':True,'commission_rate':comm,'latency_ms':latency,'max_executable_price':MAX_PRICE,'files_requested':len(files),'markets_with_events':len({r['market_id'] for r in rows}),'row_count':len(rows),'dates':dates,'calibration_dates':sorted(train),'heldout_dates':sorted(test),'horizons_sec':list(HORIZONS),'event_types':{t:sum(r['event_type']==t for r in rows) for t in sorted({r['event_type'] for r in rows})}}
+    out={'study':'paddock_inplay_suspension_event_study','report_version':'v3-atb-atl','read_only':True,'commission_rate':comm,'latency_ms':latency,'betfair_field_semantics':{'atb':'Available To Back; BACK entry consumes atb','atl':'Available To Lay; LAY entry consumes atl','source':'https://betfair-developer-docs.atlassian.net/wiki/spaces/1smk3cen4v3lu3yomq5qye0ni/pages/2687396/Exchange+Stream+API'},'payoff_sanity':{'unchanged_book':{'atb':2.0,'atl':2.02},'back_then_lay':'2.00/2.02 - 1 < 0','lay_then_back':'1 - 2.02/2.00 < 0'},'max_executable_price':MAX_PRICE,'files_requested':len(files),'markets_with_events':len({r['market_id'] for r in rows}),'row_count':len(rows),'dates':dates,'calibration_dates':sorted(train),'heldout_dates':sorted(test),'horizons_sec':list(HORIZONS),'event_types':{t:sum(r['event_type']==t for r in rows) for t in sorted({r['event_type'] for r in rows})}}
     results=[]
     # Calibrate threshold and direction separately for continuation/reversal, then freeze on held-out.
     for direction in ('continuation','reversal'):
